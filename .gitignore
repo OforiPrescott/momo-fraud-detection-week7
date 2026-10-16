@@ -1,1 +1,22 @@
 /.kilo
+
+# Large generated data files (regenerate via pipeline, do not commit)
+data/raw/paysim_real.csv
+data/processed/access_events_full.csv
+data/processed/labeled_dataset.csv
+data/processed/features.csv
+
+# Environment and dependencies
+venv/
+.env
+node_modules/
+frontend/dist/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# OS
+.DS_Store
+Thumbs.db
