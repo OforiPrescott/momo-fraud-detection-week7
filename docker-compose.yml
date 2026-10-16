@@ -1,0 +1,17 @@
+services:
+  momo-fraud-detection:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - MOMO_MAX_ROWS=1000000
+      - MOMO_MAX_UPLOAD_MB=300
+      - MOMO_CORS_ORIGINS=*
+      - MOMO_ALLOW_PRIVATE_HOSTS=0
+    # Optional: set an ingest key to require X-API-Key on /api/ingest
+    # - MOMO_INGEST_KEY=change-me-in-production
+    volumes:
+      # Precomputed dashboard data (generated offline, mounted in)
+      - ./backend/data:/app/backend/data:ro
+      - ./reports:/app/reports:ro
+    restart: unless-stopped

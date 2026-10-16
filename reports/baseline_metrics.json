@@ -1,0 +1,18 @@
+{
+  "precision": 0.9991,
+  "recall": 1.0,
+  "f1": 0.9995,
+  "auc_roc": 1.0,
+  "auc_pr": 1.0,
+  "confusion_matrix": {
+    "tn_fp_fn_tp": [
+      92999,
+      5,
+      0,
+      5300
+    ]
+  },
+  "n_train": 393215,
+  "n_test": 98304,
+  "positive_rate_pct": 5.392
+}

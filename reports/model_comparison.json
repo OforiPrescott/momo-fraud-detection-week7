@@ -1,0 +1,64 @@
+{
+  "hyperparameter_search_results": [
+    {
+      "max_depth": 4,
+      "n_estimators": 150,
+      "learning_rate": 0.1,
+      "precision": 0.9996,
+      "recall": 0.9998,
+      "f1": 0.9997,
+      "auc_roc": 1.0,
+      "auc_pr": 1.0
+    },
+    {
+      "max_depth": 6,
+      "n_estimators": 200,
+      "learning_rate": 0.1,
+      "precision": 0.9998,
+      "recall": 0.9998,
+      "f1": 0.9998,
+      "auc_roc": 1.0,
+      "auc_pr": 1.0
+    },
+    {
+      "max_depth": 8,
+      "n_estimators": 150,
+      "learning_rate": 0.05,
+      "precision": 0.9998,
+      "recall": 1.0,
+      "f1": 0.9999,
+      "auc_roc": 1.0,
+      "auc_pr": 1.0
+    },
+    {
+      "max_depth": 6,
+      "n_estimators": 300,
+      "learning_rate": 0.05,
+      "precision": 0.9998,
+      "recall": 0.9998,
+      "f1": 0.9998,
+      "auc_roc": 1.0,
+      "auc_pr": 1.0
+    }
+  ],
+  "best_config": {
+    "max_depth": 4,
+    "n_estimators": 150,
+    "learning_rate": 0.1
+  },
+  "tuned_xgboost_full_train": {
+    "precision": 0.9989,
+    "recall": 1.0,
+    "f1": 0.9994,
+    "auc_roc": 1.0,
+    "auc_pr": 1.0
+  },
+  "mlp_neural_net": {
+    "precision": 0.999,
+    "recall": 0.9836,
+    "f1": 0.9913,
+    "auc_roc": 0.9989,
+    "auc_pr": 0.9978
+  },
+  "notes": "XGBoost models trained with scale_pos_weight for class imbalance. Hyperparameter search run on a 1M-row stratified subsample for speed, winning config retrained on the full 5.09M-row training set for final metrics. MLP trained on a 1M-row stratified subsample (sklearn MLPClassifier does not scale to 5M+ rows in reasonable time on this hardware); evaluated on the full held-out test set, same split used for every model in this comparison."
+}

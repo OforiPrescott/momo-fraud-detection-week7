@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>MoMo Fraud &amp; Intrusion Detection — SOC Dashboard</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<style>
+  :root {
+    --navy: #1f3864; --red: #c0392b; --grey: #595959; --bg: #f4f6f9; --card: #ffffff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    background: var(--bg); margin: 0; padding: 24px; color: #1a1a1a;
+  }
+  h1 { color: var(--navy); margin-bottom: 4px; font-size: 22px; }
+  .subtitle { color: var(--grey); margin-top: 0; margin-bottom: 24px; font-size: 14px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; margin-bottom: 24px; }
+  .card { background: var(--card); border-radius: 10px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+  .card .label { font-size: 12px; color: var(--grey); text-transform: uppercase; letter-spacing: 0.03em; }
+  .card .value { font-size: 26px; font-weight: 700; color: var(--navy); margin-top: 4px; }
+  .card.alert .value { color: var(--red); }
+  .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px; }
+  .chart-card { background: var(--card); border-radius: 10px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+  .chart-card h3 { margin-top: 0; font-size: 14px; color: var(--navy); }
+  table { width: 100%; border-collapse: collapse; background: var(--card); border-radius: 10px; overflow: hidden; }
+  th, td { padding: 8px 10px; text-align: left; font-size: 13px; border-bottom: 1px solid #eee; }
+  th { background: var(--navy); color: white; font-weight: 600; }
+  tr:nth-child(even) { background: #fafafa; }
+  .panel { background: var(--card); border-radius: 10px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+  .panel h3 { margin-top: 0; color: var(--navy); font-size: 14px; }
+  select { padding: 6px 10px; border-radius: 6px; border: 1px solid #ccc; margin-bottom: 12px; }
+  .status { font-size: 12px; color: var(--grey); margin-bottom: 16px; }
+  .dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; }
+  .dot.ok { background: #2ecc71; } .dot.err { background: var(--red); }
+</style>
+</head>
+<body>
+
+<h1>MoMo Fraud &amp; Intrusion Detection System</h1>
+<p class="subtitle">SOC analyst view &middot; real PaySim transaction data + synthetic access-event layer + Ghana-specific attack labeling</p>
+<p class="status" id="status"><span class="dot" id="statusDot"></span><span id="statusText">Connecting to API...</span></p>
+
+<div class="cards" id="cards"></div>
+
+<div class="charts">
+  <div class="chart-card"><h3>Fraud rate by transaction type (PaySim isFraud)</h3><canvas id="fraudChart" height="180"></canvas></div>
+  <div class="chart-card"><h3>Attack-pattern rate by transaction type (combined labels)</h3><canvas id="attackChart" height="180"></canvas></div>
+</div>
+
+<div class="panel">
+  <h3>Flagged transactions</h3>
+  <select id="sourceSelect">
+    <option value="rules">Rule-based (Week 3 patterns)</option>
+    <option value="model">Live model score (Week 5-7 XGBoost)</option>
+  </select>
+  <select id="patternSelect">
+    <option value="sim_swap_takeover">SIM-swap takeover</option>
+    <option value="pin_sharing_flag">PIN-sharing abuse</option>
+    <option value="agent_collusion_flag">Agent collusion</option>
+  </select>
+  <table id="flaggedTable">
+    <thead><tr id="flaggedHead"><th>Step</th><th>Type</th><th>Amount</th><th>Origin</th><th>Destination</th></tr></thead>
+    <tbody></tbody>
+  </table>
+</div>
+
+<script>
+const API = "http://localhost:8000";
+
+async function loadSummary() {
+  try {
+    const res = await fetch(`${API}/api/summary`);
+    if (!res.ok) throw new Error("API error " + res.status);
+    const data = await res.json();
+    document.getElementById("statusDot").className = "dot ok";
+    document.getElementById("statusText").textContent = "Connected — live data from labeled_dataset.csv";
+    renderCards(data);
+    renderCharts(data);
+  } catch (err) {
+    document.getElementById("statusDot").className = "dot err";
+    document.getElementById("statusText").textContent =
+      "Could not reach API at " + API + ". Run: uvicorn backend.main:app --port 8000";
+  }
+}
+
+function renderCards(data) {
+  const cards = [
+    { label: "Total transactions", value: data.total_transactions.toLocaleString() },
+    { label: "PaySim isFraud", value: data.flags.isFraud.toLocaleString() },
+    { label: "SIM-swap takeover", value: data.flags.sim_swap_takeover.toLocaleString(), alert: true },
+    { label: "PIN-sharing abuse", value: data.flags.pin_sharing_flag.toLocaleString(), alert: true },
+    { label: "Agent collusion", value: data.flags.agent_collusion_flag.toLocaleString(), alert: true },
+    { label: "Any attack flag", value: `${data.flags.any_attack_flag.toLocaleString()} (${data.any_attack_rate_pct}%)`, alert: true },
+  ];
+  document.getElementById("cards").innerHTML = cards.map(c => `
+    <div class="card ${c.alert ? 'alert' : ''}">
+      <div class="label">${c.label}</div>
+      <div class="value">${c.value}</div>
+    </div>`).join("");
+}
+
+function renderCharts(data) {
+  const types = Object.keys(data.fraud_rate_by_type_pct);
+  new Chart(document.getElementById("fraudChart"), {
+    type: "bar",
+    data: { labels: types, datasets: [{ data: types.map(t => data.fraud_rate_by_type_pct[t]), backgroundColor: "#c0392b" }] },
+    options: { plugins: { legend: { display: false } }, scales: { y: { title: { display: true, text: "%" } } } }
+  });
+  new Chart(document.getElementById("attackChart"), {
+    type: "bar",
+    data: { labels: types, datasets: [{ data: types.map(t => data.attack_rate_by_type_pct[t]), backgroundColor: "#1f3864" }] },
+    options: { plugins: { legend: { display: false } }, scales: { y: { title: { display: true, text: "%" } } } }
+  });
+}
+
+async function loadFlagged(pattern) {
+  try {
+    const res = await fetch(`${API}/api/flagged?pattern=${pattern}&limit=25`);
+    const rows = await res.json();
+    document.getElementById("flaggedHead").innerHTML =
+      "<th>Step</th><th>Type</th><th>Amount</th><th>Origin</th><th>Destination</th>";
+    document.querySelector("#flaggedTable tbody").innerHTML = rows.map(r => `
+      <tr>
+        <td>${r.step}</td>
+        <td>${r.type}</td>
+        <td>${Number(r.amount).toLocaleString(undefined, {maximumFractionDigits:2})}</td>
+        <td>${r.nameOrig}</td>
+        <td>${r.nameDest}</td>
+      </tr>`).join("");
+  } catch (err) {
+    document.querySelector("#flaggedTable tbody").innerHTML = `<tr><td colspan="5">Could not load flagged transactions.</td></tr>`;
+  }
+}
+
+async function loadModelFlagged() {
+  try {
+    const res = await fetch(`${API}/api/model-flagged?limit=25`);
+    const rows = await res.json();
+    document.getElementById("flaggedHead").innerHTML =
+      "<th>Step</th><th>Type</th><th>Amount</th><th>Origin</th><th>Destination</th><th>Risk score</th>";
+    document.querySelector("#flaggedTable tbody").innerHTML = rows.map(r => `
+      <tr>
+        <td>${r.step}</td>
+        <td>${r.type}</td>
+        <td>${Number(r.amount).toLocaleString(undefined, {maximumFractionDigits:2})}</td>
+        <td>${r.nameOrig}</td>
+        <td>${r.nameDest}</td>
+        <td><b style="color:#c0392b">${(r.risk_score*100).toFixed(1)}%</b></td>
+      </tr>`).join("");
+  } catch (err) {
+    document.querySelector("#flaggedTable tbody").innerHTML = `<tr><td colspan="6">Could not load model scores. Is the model trained (backend/model.joblib)?</td></tr>`;
+  }
+}
+
+function refreshTable() {
+  const source = document.getElementById("sourceSelect").value;
+  if (source === "model") {
+    document.getElementById("patternSelect").style.display = "none";
+    loadModelFlagged();
+  } else {
+    document.getElementById("patternSelect").style.display = "inline-block";
+    loadFlagged(document.getElementById("patternSelect").value);
+  }
+}
+
+document.getElementById("sourceSelect").addEventListener("change", refreshTable);
+document.getElementById("patternSelect").addEventListener("change", refreshTable);
+
+loadSummary();
+refreshTable();
+</script>
+
+</body>
+</html>

@@ -1,0 +1,32 @@
+{
+  "total_transactions": 491519,
+  "flags": {
+    "isFraud": 308,
+    "sim_swap_takeover": 11219,
+    "pin_sharing_flag": 15002,
+    "agent_collusion_flag": 0,
+    "any_attack_flag": 26501
+  },
+  "any_attack_rate_pct": 5.392,
+  "fraud_rate_by_type_pct": {
+    "CASH_IN": 0.0,
+    "CASH_OUT": 0.1427,
+    "DEBIT": 0.0,
+    "PAYMENT": 0.0,
+    "TRANSFER": 0.1301
+  },
+  "attack_rate_by_type_pct": {
+    "CASH_IN": 2.9658,
+    "CASH_OUT": 8.3713,
+    "DEBIT": 2.1739,
+    "PAYMENT": 3.0413,
+    "TRANSFER": 8.2558
+  },
+  "transaction_count_by_type": {
+    "CASH_OUT": 179399,
+    "PAYMENT": 171573,
+    "CASH_IN": 98321,
+    "TRANSFER": 39972,
+    "DEBIT": 2254
+  }
+}
