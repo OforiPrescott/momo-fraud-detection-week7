@@ -19,7 +19,8 @@ const PAGES = NAV.map(([k]) => k);
 export default function App() {
   const { user } = useAuth();
   if (user === undefined) return <div className="splash"><img src="/gvsu-logo-white.svg" alt="" /><div className="progress" /></div>;
-  if (!user) return <Auth />;
+  // a password-reset link opens the reset form even if this browser is already signed in
+  if (!user || window.location.hash.startsWith("#reset=")) return <Auth />;
   // the live stream is per user, so it only opens once someone is signed in
   return <LiveProvider><Shell /></LiveProvider>;
 }

@@ -11,12 +11,13 @@
   "dependencies": {
     "@fontsource-variable/public-sans": "^5.1.0",
     "@fontsource-variable/source-serif-4": "^5.1.0",
+    "qrcode": "1.5.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "recharts": "^2.13.0"
   },
   "devDependencies": {
-    "@vitejs/plugin-react": "^4.3.3",
-    "vite": "^5.4.10"
+    "@vitejs/plugin-react": "^6.1.2",
+    "vite": "^8.3.5"
   }
 }

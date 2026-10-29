@@ -81,6 +81,9 @@ their own account; their analyses and live monitor are private to them.
 
 * Register, sign in (optionally "keep me signed in for 30 days"), sign out, sign out of all devices,
   edit profile, change password and delete the account, all from the dashboard (**Account** page).
+* **Forgot password?** emails a single-use reset link valid for 30 minutes (configure SMTP, below; without
+  it the link is printed in the server window). **Two-step sign-in** adds a 6-digit code from an
+  authenticator app (Google/Microsoft Authenticator, Authy...) plus 8 one-time recovery codes.
 * **Passwords are never stored**: only a salted PBKDF2-SHA256 hash (600,000 iterations). Sessions and API
   keys are stored only as SHA-256 hashes. Weak and common passwords are refused; repeated failed sign-ins
   are paused; every sign-in, failure and key change appears in the user's **Recent security activity**.
@@ -97,7 +100,7 @@ their own account; their analyses and live monitor are private to them.
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest tests -q --ignore=tests/smoke_test.py   # 43 security, ML and API tests
+python -m pytest tests -q --ignore=tests/smoke_test.py   # 56 security, account-recovery, ML and API tests
 python tests/smoke_test.py                                # end-to-end walkthrough of every feature
 ```
 
@@ -312,6 +315,9 @@ Environment variables:
 | `MOMO_API_DOCS` | 1 | Set to 0 to hide the interactive API docs at `/docs` |
 | `MOMO_MODEL_SHA256` | from `model.joblib.sha256` | Expected checksum of the model file |
 | `MOMO_LOG_LEVEL` | INFO | Logging detail; security events are logged under `momo.security` |
+| `MOMO_PUBLIC_URL` | none | Address users open the site at (e.g. `https://momo.example.org`); required for reset emails |
+| `MOMO_SMTP_HOST` / `MOMO_SMTP_PORT` | none / 587 | Email server for password-reset links (587 STARTTLS or 465 TLS) |
+| `MOMO_SMTP_USER` / `MOMO_SMTP_PASSWORD` / `MOMO_SMTP_FROM` | none | Email login and sender address |
 
 `docker-compose.yml` already sets the shared-server values.
 

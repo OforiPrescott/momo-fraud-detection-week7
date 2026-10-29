@@ -33,32 +33,67 @@ export function StrengthMeter({ pw }) {
 }
 
 export default function Auth() {
-  const { login, register, config } = useAuth();
-  const [mode, setMode] = useState(() => (window.location.hash === "#register" ? "register" : "login"));
-  const [f, setF] = useState({ name: "", email: "", organization: "", password: "", confirm: "", remember: true });
+  const { login, loginCode, forgot, resetPassword, register, config } = useAuth();
+  const hash = window.location.hash;
+  // modes: login | register | forgot (ask for a link) | reset (choose a new password) | code (authenticator step)
+  const [mode, setMode] = useState(() => (hash.startsWith("#reset=") ? "reset" : hash === "#register" ? "register" : "login"));
+  const [resetToken] = useState(() => (hash.startsWith("#reset=") ? decodeURIComponent(hash.slice(7)) : ""));
+  const [f, setF] = useState({ name: "", email: "", organization: "", password: "", confirm: "", remember: true, code: "" });
+  const [mfaToken, setMfaToken] = useState("");
+  const [useRecovery, setUseRecovery] = useState(false);
   const [err, setErr] = useState("");
+  const [info, setInfo] = useState("");
   const [busy, setBusy] = useState(false);
   const set = (k) => (e) => setF({ ...f, [k]: e.target.type === "checkbox" ? e.target.checked : e.target.value });
-  const swap = (m) => { setMode(m); setErr(""); window.history.replaceState(null, "", m === "register" ? "#register" : "#"); };
+  const swap = (m) => {
+    if (mode === "reset" && m !== "reset") window.history.replaceState(null, "", "#");  // leave the one-time link behind
+    setMode(m); setErr(""); setInfo(""); setF((x) => ({ ...x, password: "", confirm: "", code: "" }));
+    window.history.replaceState(null, "", m === "register" ? "#register" : "#");
+  };
 
   const submit = async (e) => {
     e.preventDefault();
-    setErr("");
-    if (mode === "register") {
+    setErr(""); setInfo("");
+    if (mode === "register" || mode === "reset") {
       if (!passwordOk(f.password)) return setErr("Choose a password with at least 8 characters, including a letter and a number.");
       if (f.password !== f.confirm) return setErr("The two passwords do not match.");
     }
     setBusy(true);
     try {
-      if (mode === "login") await login(f.email, f.password, f.remember);
-      else await register({ name: f.name, email: f.email, organization: f.organization, password: f.password });
+      if (mode === "login") {
+        const step = await login(f.email, f.password, f.remember);
+        if (step) { setMfaToken(step.mfa_token); setMode("code"); setUseRecovery(false); return; }
+      } else if (mode === "code") {
+        await loginCode(mfaToken, f.code);
+      } else if (mode === "register") {
+        await register({ name: f.name, email: f.email, organization: f.organization, password: f.password });
+      } else if (mode === "forgot") {
+        const r = await forgot(f.email);
+        return setInfo(r.message);
+      } else if (mode === "reset") {
+        const r = await resetPassword(resetToken, f.password);
+        window.dispatchEvent(new Event("momo:signed-out")); // every session was ended by the reset
+        swap("login");
+        return setInfo(`Your password has been changed and every device was signed out. Sign in with your new password${r.mfa_enabled ? " and your authenticator code" : ""}.`);
+      }
       window.history.replaceState(null, "", "#overview");
     } catch (x) {
       setErr(x.message);
+      if (mode === "code" && /expired|Too many/.test(x.message)) { setMode("login"); setF((v) => ({ ...v, code: "" })); }
     } finally {
       setBusy(false);
     }
   };
+
+  const HEAD = {
+    login: ["Welcome back", "Sign in to continue to your dashboard."],
+    register: ["Create your account", "Free to use. Your analyses stay private to your account."],
+    forgot: ["Reset your password", "Enter your account's email address and we'll send you a link to choose a new password."],
+    reset: ["Choose a new password", "This signs you out on every device. The link works once."],
+    code: ["Two-step sign-in", useRecovery ? "Enter one of the recovery codes you saved when you turned on two-step sign-in." : "Open your authenticator app and enter the 6-digit code shown for MoMo Fraud Detection."],
+  };
+  const BUTTON = { login: ["Sign in", "Signing in..."], register: ["Create account", "Creating account..."], forgot: ["Send reset link", "Sending..."],
+    reset: ["Set new password", "Saving..."], code: ["Verify and sign in", "Checking..."] };
 
   return (
     <div className="auth">
@@ -84,16 +119,17 @@ export default function Auth() {
       <section className="panel">
         <form className="authcard" onSubmit={submit} noValidate={false}>
           <div className="authhead">
-            <h2>{mode === "login" ? "Welcome back" : "Create your account"}</h2>
-            <p className="muted">{mode === "login" ? "Sign in to continue to your dashboard." : "Free to use. Your analyses stay private to your account."}</p>
+            <h2>{HEAD[mode][0]}</h2>
+            <p className="muted">{HEAD[mode][1]}</p>
           </div>
-          {config.registration_open && (
+          {config.registration_open && (mode === "login" || mode === "register") && (
             <div className="seg full" role="tablist">
               <button type="button" role="tab" aria-selected={mode === "login"} className={mode === "login" ? "on" : ""} onClick={() => swap("login")}>Sign in</button>
               <button type="button" role="tab" aria-selected={mode === "register"} className={mode === "register" ? "on" : ""} onClick={() => swap("register")}>Create account</button>
             </div>
           )}
           {err && <div className="err" role="alert">{err}</div>}
+          {info && <div className="note" role="status">{info}</div>}
 
           {mode === "register" && (
             <>
@@ -101,11 +137,18 @@ export default function Auth() {
               <label className="f" htmlFor="a-org"><span>Organisation <span className="faint">(optional)</span></span><input id="a-org" type="text" value={f.organization} onChange={set("organization")} autoComplete="organization" maxLength={120} placeholder="Bank, telco or university" /></label>
             </>
           )}
-          <label className="f" htmlFor="a-email">Email address<input id="a-email" type="email" value={f.email} onChange={set("email")} autoComplete="email" required placeholder="you@example.com" /></label>
-          <label className="f" htmlFor="a-pw">Password
-            <PasswordInput id="a-pw" value={f.password} onChange={set("password")} autoComplete={mode === "login" ? "current-password" : "new-password"} />
-          </label>
-          {mode === "register" && (
+          {(mode === "login" || mode === "register" || mode === "forgot") && (
+            <label className="f" htmlFor="a-email">Email address<input id="a-email" type="email" value={f.email} onChange={set("email")} autoComplete="email" required placeholder="you@example.com" /></label>
+          )}
+          {(mode === "login" || mode === "register" || mode === "reset") && (
+            <label className="f" htmlFor="a-pw">
+              <span className="row" style={{ justifyContent: "space-between" }}>{mode === "reset" ? "New password" : "Password"}
+                {mode === "login" && <button type="button" className="link" onClick={() => swap("forgot")}>Forgot password?</button>}
+              </span>
+              <PasswordInput id="a-pw" value={f.password} onChange={set("password")} autoComplete={mode === "login" ? "current-password" : "new-password"} />
+            </label>
+          )}
+          {(mode === "register" || mode === "reset") && (
             <>
               <StrengthMeter pw={f.password} />
               <label className="f" htmlFor="a-pw2">Confirm password
@@ -113,15 +156,33 @@ export default function Auth() {
               </label>
             </>
           )}
+          {mode === "code" && (
+            <label className="f" htmlFor="a-code">{useRecovery ? "Recovery code" : "6-digit code"}
+              <input id="a-code" type="text" value={f.code} onChange={set("code")} required autoFocus
+                autoComplete="one-time-code" inputMode={useRecovery ? "text" : "numeric"} maxLength={useRecovery ? 11 : 6}
+                placeholder={useRecovery ? "abcde-12345" : "123456"} className="codeinput" />
+            </label>
+          )}
           {mode === "login" && (
             <label className="check"><input type="checkbox" checked={f.remember} onChange={set("remember")} />Keep me signed in for 30 days</label>
           )}
 
-          <button className="btn primary lg block" disabled={busy}>
-            {busy ? (mode === "login" ? "Signing in..." : "Creating account...") : mode === "login" ? "Sign in" : "Create account"}
+          <button className="btn primary lg block" disabled={busy || (mode === "forgot" && !!info)}>
+            {busy ? BUTTON[mode][1] : BUTTON[mode][0]}
           </button>
 
-          {config.registration_open && (
+          {mode === "code" && (
+            <p className="switch">
+              <button type="button" className="link" onClick={() => { setUseRecovery(!useRecovery); setF({ ...f, code: "" }); setErr(""); }}>
+                {useRecovery ? "Use the code from my app instead" : "Lost your phone? Use a recovery code"}
+              </button>
+              {" · "}<button type="button" className="link" onClick={() => swap("login")}>Start again</button>
+            </p>
+          )}
+          {(mode === "forgot" || mode === "reset") && (
+            <p className="switch">Remembered it? <button type="button" className="link" onClick={() => swap("login")}>Back to sign in</button></p>
+          )}
+          {config.registration_open && (mode === "login" || mode === "register") && (
             <p className="switch">
               {mode === "login" ? <>New here? <button type="button" className="link" onClick={() => swap("register")}>Create a free account</button></>
                 : <>Already have an account? <button type="button" className="link" onClick={() => swap("login")}>Sign in</button></>}

@@ -153,8 +153,27 @@ The eye icon in a password field shows or hides what you typed.
 - "This request came from another website and was blocked" means a page on another site tried to act on
   your account. Open the platform directly from its own address.
 
-There is no email password reset yet. If you forget your password, ask the person who runs the server, or
-create a new account.
+**Forgot your password?**
+
+1. On the sign-in page, click **Forgot password?** (beside the Password label).
+2. Enter your email address and click **Send reset link**. You see the same message whether or not the email
+   has an account, so nobody can use this page to find out who is registered.
+3. Open the email and click the link within **30 minutes**. It works **once**.
+4. Choose a new password (the same rules apply), type it twice and click **Set new password**.
+5. Every device is signed out. Sign in with your new password and, if it is on, your authenticator code.
+
+![Forgot password](images/forgot.png)
+
+No email? Check your spam folder, then ask for a new link (at most 5 requests per 15 minutes). On a computer
+running the platform without an email server ("console mode"), the link appears in the server's terminal
+window instead: the person running the server can copy it to you.
+
+**Signing in with two-step sign-in.** If you have turned it on (section 10), after your password the page asks
+for the **6-digit code** your authenticator app shows for MoMo Fraud Detection. Codes change every 30
+seconds; type the current one. Lost your phone? Click **Lost your phone? Use a recovery code** and enter one
+of the recovery codes you saved. Each recovery code works once.
+
+![Two-step sign-in](images/2fa-login.png)
 
 ## 4. A tour of the dashboard
 
@@ -341,11 +360,32 @@ Open it by clicking your name at the bottom of the sidebar, or the person icon o
 | **Profile** | Change your name and organisation. Shows when you joined and last signed in. |
 | **Password** | Enter your current password and a new one twice. Every other device is signed out. |
 | **API key** | **Create API key**, **Replace key** or **Revoke key** (section 11). Only from a signed-in browser. |
+| **Two-step sign-in** | Turn on a second sign-in step with an authenticator app, create new recovery codes, or turn it off. |
 | **Recent security activity** | Every sign-in, failed sign-in, password change, API key change and sign-out in the last 90 days, with time, device and network address. Failed attempts are highlighted. |
 | **Sessions** | **Sign out of all devices** ends every session, including this one. |
 | **Delete account** | Enter your password, then **Permanently delete**. Cannot be undone. |
 
 ![Recent security activity](images/activity.png)
+
+### Turning on two-step sign-in (recommended)
+
+With two-step sign-in, someone who steals or guesses your password still cannot get in without your phone.
+
+1. Install an authenticator app on your phone: Google Authenticator, Microsoft Authenticator, Authy or similar.
+2. On the Account page, under **Two-step sign-in**, click **Turn on two-step sign-in** and confirm your password.
+3. In the app, add an account and **scan the QR code**. If you cannot scan, choose "enter a setup key" and type
+   the key shown beside it.
+4. Type the 6-digit code the app now shows and click **Turn on**.
+5. **Save the 8 recovery codes** that appear (Download or Copy), somewhere other than your phone, then click
+   **I have saved them**. They are shown only once.
+
+![Setting up two-step sign-in](images/2fa-setup.png)
+
+![Recovery codes](images/2fa-codes.png)
+
+The card then shows how many recovery codes are left. **New recovery codes** replaces them all. **Turn off**
+needs your password and a current code (or a recovery code). If your phone's clock is wrong, codes will not
+match: set the phone to set its time automatically.
 
 **Check your activity now and then.** If you see a sign-in or change you did not make, change your password
 straight away and use **Sign out of all devices**.
@@ -430,9 +470,13 @@ data has a confirmed-fraud column.
 - **Your session** is a random token in a cookie that page scripts cannot read; the server stores only a
   hash of it.
 - **Your API key** is stored only as a hash and shown to you once.
+- **Your recovery codes and password-reset links** are stored only as hashes, and each works once.
+- **Your two-step secret** is kept by the server so it can check your codes; it is never shown again or
+  sent back by any page.
 - **Your uploaded data is never written to disk.** It is analysed in memory and disappears on restart.
 
-**What protects your account**: the password rules in section 3, sign-in pauses after repeated failures,
+**What protects your account**: optional two-step sign-in, single-use 30-minute reset links that never skip
+the second step, the password rules in section 3, sign-in pauses after repeated failures,
 identical messages for wrong email and wrong password, the security activity log, signing out other devices
 when you change your password, and refusing requests that come from other websites.
 
@@ -466,6 +510,8 @@ This section is for whoever hosts the platform for other people.
 | `MOMO_CORS_ORIGINS` | none | none | Other websites allowed to call the API |
 | `MOMO_TRUSTED_ORIGINS` | none | as needed | Other origins allowed to send signed-in requests |
 | `MOMO_DB_PATH` | `var/momo.db` | as needed | Where accounts are stored |
+| `MOMO_PUBLIC_URL` | none | your site's address | Used to build password-reset links; required with email |
+| `MOMO_SMTP_HOST`, `_PORT`, `_USER`, `_PASSWORD`, `_FROM` | none, 587 | your email provider | Sends password-reset emails; without them, links go to the server log |
 | `MOMO_MAX_UPLOAD_MB` / `MOMO_MAX_ROWS` | 300 / 1,000,000 | as needed | Upload limits |
 | `MOMO_MAX_SESSIONS` | 24 | as needed | Analyses kept in memory (3 per user) |
 
@@ -488,6 +534,11 @@ are kept. Before deploying a change, run the tests: `python -m pytest tests -q -
 | Port 8000 already in use | Start on another port, for example `PORT=8080 ./start.sh`. |
 | "That password is too common" / "must not contain your name or email" | Choose a different password (section 3). |
 | "Too many failed sign-in attempts" | Wait 15 minutes. |
+| "That code is not right" at two-step sign-in | Type the code currently shown; check your phone sets its time automatically. |
+| Lost the phone with the authenticator app | Use a recovery code, then turn two-step sign-in off and on again with the new phone. |
+| Lost the phone and the recovery codes | Ask the person who runs the server. |
+| "This reset link is invalid, already used or expired" | Ask for a new link from **Forgot password?**. |
+| No reset email arrives | Check spam; on a server without email set up, ask its operator for the link from the server window. |
 | "This request came from another website and was blocked" | Open the platform directly from its own address. |
 | "The model file failed its integrity check" | `backend/model.joblib` was changed or damaged. Restore it with `git checkout backend/model.joblib`, or retrain. |
 | "This analysis has expired from memory" | The server restarted, or you ran more than three analyses. Run it again. |
@@ -505,7 +556,8 @@ are kept. Before deploying a change, run the tests: `python -m pytest tests -q -
 - **Can the server owner see my password?** No. Only a one-way hash is stored.
 - **Is my data stored?** Uploaded data is analysed in memory only and never written to disk.
 - **Can other users see my analyses?** No.
-- **I forgot my password.** There is no email reset yet. Ask the server owner, or create a new account.
+- **I forgot my password.** Click **Forgot password?** on the sign-in page (section 3).
+- **Should I turn on two-step sign-in?** Yes, especially if you analyse real customer data.
 - **Does the currency selector convert amounts?** No, it only changes the symbol.
 - **Can I trust the scores on my own data?** Check the Data quality tab (signal coverage and similarity to the
   training data) and validate with a confirmed-fraud column first.
@@ -521,7 +573,9 @@ are kept. Before deploying a change, run the tests: `python -m pytest tests -q -
 | Data drift | When new data differs from the data a model was trained on, making its scores less reliable |
 | F1 | A single score balancing precision and recall |
 | Hash | A one-way fingerprint of a secret; the secret cannot be recovered from it |
+| Authenticator app | A phone app (Google Authenticator, Microsoft Authenticator, Authy...) that shows a new 6-digit sign-in code every 30 seconds |
 | Ingest | Sending transactions to the platform one at a time as they happen |
+| Recovery code | A one-time code that replaces the authenticator code if you lose your phone |
 | PaySim | A public simulated mobile money dataset (6.36 million transactions) used to train the model |
 | PIN-sharing abuse | One account used from several devices, suggesting its PIN is known to others |
 | Precision | Of the transactions flagged, the share that were real attacks ("alerts that are real") |
@@ -533,5 +587,7 @@ are kept. Before deploying a change, run the tests: `python -m pytest tests -q -
 | SIM-swap takeover | A criminal moves the victim's number to a new SIM, then drains the account |
 | Signal coverage | How much of the model's inputs your data supplied |
 | Step-up verification | An extra check before releasing funds, such as a one-time code or biometric |
+| TOTP | Time-based one-time password: the standard (RFC 6238) behind authenticator-app codes |
+| Two-step sign-in | Signing in with your password plus a code from your phone |
 | TreeSHAP | The method used to measure how much each input raised or lowered a single score |
 | XGBoost | The gradient-boosted decision-tree model that produces the scores |

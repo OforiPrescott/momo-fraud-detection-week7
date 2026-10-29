@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { get } from "../api";
 import { passwordOk, useAuth } from "../auth";
+import TwoStep from "../components/TwoStep";
 import { Card } from "../components/ui";
 import { useToast } from "../toast";
 import { Avatar, PasswordInput, StrengthMeter } from "./Auth";
@@ -96,6 +97,8 @@ export default function Account() {
             </details>
           </div>
         </Card>
+
+        <TwoStep onChange={loadActivity} />
 
         <Card title="Recent security activity" sub="Sign-ins, password and API key changes on your account over the last 90 days. If you see something you did not do, change your password and sign out of all devices."
           right={<button className="btn sm" onClick={loadActivity}>Refresh</button>}>

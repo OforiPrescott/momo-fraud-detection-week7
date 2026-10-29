@@ -17,7 +17,13 @@ export function AuthProvider({ children }) {
     return () => window.removeEventListener("momo:signed-out", out);
   }, []);
 
-  const login = useCallback((email, password, remember) => post("/api/auth/login", { email, password, remember }).then(setUser), []);
+  // returns {mfa_token} when two-step sign-in is on; the session starts only after loginCode succeeds
+  const login = useCallback((email, password, remember) => post("/api/auth/login", { email, password, remember })
+    .then((r) => { if (r.mfa_required) return r; setUser(r); return null; }), []);
+  const loginCode = useCallback((mfa_token, code) => post("/api/auth/login/2fa", { mfa_token, code }).then(setUser), []);
+  const forgot = useCallback((email) => post("/api/auth/forgot", { email }), []);
+  const resetPassword = useCallback((token, new_password) => post("/api/auth/reset", { token, new_password }), []);
+  const refresh = useCallback(() => get("/api/auth/me").then(setUser), []);
   const register = useCallback((form) => post("/api/auth/register", form).then(setUser), []);
   const logout = useCallback(() => post("/api/auth/logout").catch(() => {}).then(() => setUser(null)), []);
   const logoutAll = useCallback(() => post("/api/auth/logout-all").then(() => setUser(null)), []);
@@ -28,7 +34,7 @@ export function AuthProvider({ children }) {
   const deleteAccount = useCallback((password) => post("/api/auth/delete", { password }).then(() => setUser(null)), []);
 
   return (
-    <Ctx.Provider value={{ user, config, login, register, logout, logoutAll, updateProfile, changePassword, createKey, revokeKey, deleteAccount }}>
+    <Ctx.Provider value={{ user, config, login, loginCode, forgot, resetPassword, refresh, register, logout, logoutAll, updateProfile, changePassword, createKey, revokeKey, deleteAccount }}>
       {children}
     </Ctx.Provider>
   );

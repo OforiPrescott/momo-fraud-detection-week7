@@ -9,9 +9,14 @@ How credentials are stored (see SECURITY.md for the full picture):
     the database keeps only its SHA-256 hash, so a stolen database cannot be replayed as sessions.
   * API keys: shown to the user once; only their SHA-256 hash and last 4 characters are stored.
 
+  * Two-step sign-in (optional, per user): an authenticator-app secret (TOTP, see mfa.py) and 8 single-use
+    recovery codes stored as SHA-256 hashes. With it on, a password alone never creates a session.
+  * Password reset: a single-use, 30-minute link emailed to the account (mailer.py); only its hash is stored.
+
 Defences: password policy with a common-password blocklist, timing-equalised sign-in, rate limiting of
-sign-in / registration / password confirmation, an Origin check against cross-site requests (CSRF), and
-an audit trail of security events that each user can see on their Account page.
+sign-in / registration / password confirmation / reset requests / authenticator codes, an Origin check
+against cross-site requests (CSRF), and an audit trail of security events that each user can see on their
+Account page.
 
 The database lives at MOMO_DB_PATH (default: <project>/var/momo.db) and is created on first use.
 """
@@ -32,6 +37,8 @@ from urllib.parse import urlparse
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
+from . import mailer, mfa
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.abspath(os.environ.get("MOMO_DB_PATH", os.path.join(HERE, "..", "var", "momo.db")))
 COOKIE = "momo_session"
@@ -42,7 +49,11 @@ TRUSTED_ORIGINS = {o.strip().rstrip("/") for o in os.environ.get("MOMO_TRUSTED_O
 SHORT_SESSION, LONG_SESSION = 24 * 3600, 30 * 24 * 3600              # "remember me" keeps 30 days
 PBKDF2_ITERATIONS = 600_000                                          # OWASP 2023+ guidance for PBKDF2-SHA256
 AUDIT_RETENTION = 90 * 24 * 3600
-PUBLIC_PATHS = {"/api/health", "/api/auth/login", "/api/auth/register", "/api/auth/config"}
+PUBLIC_PATHS = {"/api/health", "/api/auth/login", "/api/auth/register", "/api/auth/config",
+                "/api/auth/forgot", "/api/auth/reset", "/api/auth/login/2fa"}
+RESET_TTL = 30 * 60      # a password-reset link works for 30 minutes, once
+MFA_TTL = 5 * 60         # after the password, the authenticator code must follow within 5 minutes
+MFA_MAX_ATTEMPTS = 5     # wrong codes allowed per sign-in attempt
 UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 ON_DELETE: list = []  # callbacks(user_id) that free a deleted user's in-memory data (set up by main.py)
 
@@ -98,10 +109,30 @@ def _db():
                             ip TEXT,
                             user_agent TEXT,
                             at REAL NOT NULL);
+                        CREATE TABLE IF NOT EXISTS reset_tokens (
+                            token_hash TEXT PRIMARY KEY,
+                            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                            expires_at REAL NOT NULL);
+                        CREATE TABLE IF NOT EXISTS mfa_challenges (
+                            token_hash TEXT PRIMARY KEY,
+                            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                            remember INTEGER NOT NULL,
+                            attempts INTEGER NOT NULL DEFAULT 0,
+                            expires_at REAL NOT NULL);
+                        CREATE TABLE IF NOT EXISTS recovery_codes (
+                            code_hash TEXT NOT NULL,
+                            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                            used_at REAL);
                         CREATE INDEX IF NOT EXISTS ix_sessions_user ON auth_sessions(user_id);
                         CREATE INDEX IF NOT EXISTS ix_events_user ON security_events(user_id, at);
+                        CREATE INDEX IF NOT EXISTS ix_recovery_user ON recovery_codes(user_id);
                         CREATE UNIQUE INDEX IF NOT EXISTS ix_users_key ON users(api_key_hash);
                     """)
+                    # upgrade databases created by earlier versions (adds the two-step sign-in columns)
+                    have = {r[1] for r in c.execute("PRAGMA table_info(users)")}
+                    for col, ddl in (("totp_secret", "TEXT"), ("totp_pending", "TEXT"), ("totp_last_step", "INTEGER")):
+                        if col not in have:
+                            c.execute(f"ALTER TABLE users ADD COLUMN {col} {ddl}")
                 try:
                     os.chmod(DB_PATH, 0o600)  # owner read/write only (no effect on Windows ACLs)
                 except OSError:
@@ -149,7 +180,7 @@ _DUMMY_HASH = hash_password(secrets.token_hex(8))  # equalises timing when the e
 def _public(row) -> dict:
     return {"id": row["id"], "email": row["email"], "name": row["name"], "organization": row["organization"],
             "created_at": row["created_at"], "last_login": row["last_login"],
-            "api_key_hint": row["api_key_hint"]}
+            "api_key_hint": row["api_key_hint"], "mfa_enabled": bool(row["totp_secret"])}
 
 
 # ------------------------------------------------------------------ audit trail
@@ -159,6 +190,10 @@ EVENT_LABELS = {
     "logout_all": "Signed out of all devices", "password_changed": "Password changed",
     "password_failed": "Wrong current password entered", "profile_updated": "Profile updated",
     "api_key_created": "API key created", "api_key_revoked": "API key revoked",
+    "password_reset_requested": "Password reset link requested", "password_reset": "Password reset by email link",
+    "mfa_enabled": "Two-step sign-in turned on", "mfa_disabled": "Two-step sign-in turned off",
+    "mfa_failed": "Wrong authenticator code entered", "recovery_code_used": "Recovery code used to sign in",
+    "recovery_codes_regenerated": "New recovery codes created",
 }
 
 
@@ -343,7 +378,7 @@ def _confirm_password(request: Request, uid: int, password: str, event_on_fail: 
 
 @router.get("/config")
 def auth_config():
-    return {"registration_open": ALLOW_REGISTRATION,
+    return {"registration_open": ALLOW_REGISTRATION, "reset_by_email": mailer.configured(),
             "password_rules": "At least 8 characters with a letter and a number; not a common password; "
                               "must not contain your name or email."}
 
@@ -391,9 +426,136 @@ def login(req: LoginRequest, request: Request, response: Response):
     if needs_rehash(row["password_hash"]):  # transparently upgrade old, weaker hashes
         with _db() as c:
             c.execute("UPDATE users SET password_hash=? WHERE id=?", (hash_password(req.password), row["id"]))
+    if row["totp_secret"]:  # two-step sign-in: the password alone does not create a session
+        token = secrets.token_urlsafe(32)
+        with _db() as c:
+            c.execute("DELETE FROM mfa_challenges WHERE expires_at < ? OR user_id = ?", (time.time(), row["id"]))
+            c.execute("INSERT INTO mfa_challenges (token_hash, user_id, remember, expires_at) VALUES (?,?,?,?)",
+                      (_sha(token), row["id"], int(req.remember), time.time() + MFA_TTL))
+        return {"mfa_required": True, "mfa_token": token}
     _start_session(response, row["id"], req.remember)
     _audit(request, "login", row["id"])
     return _public(row) | {"last_login": time.time()}
+
+
+class MfaLoginRequest(BaseModel):
+    mfa_token: str = Field(max_length=128)
+    code: str = Field(max_length=32)
+
+
+def _use_recovery_code(uid: int, code: str) -> bool:
+    if not mfa.normalise_recovery(code):
+        return False
+    with _db() as c:
+        cur = c.execute("UPDATE recovery_codes SET used_at=? WHERE user_id=? AND code_hash=? AND used_at IS NULL",
+                        (time.time(), uid, mfa.recovery_hash(code)))
+        return cur.rowcount == 1
+
+
+def _use_totp(uid: int, secret: str, last_step, code: str) -> bool:
+    step = mfa.verify(secret, code, last_step)
+    if step is None:
+        return False
+    with _db() as c:  # conditional update: two requests racing with the same code cannot both win
+        cur = c.execute("UPDATE users SET totp_last_step=? WHERE id=? AND (totp_last_step IS NULL OR totp_last_step < ?)",
+                        (step, uid, step))
+        return cur.rowcount == 1
+
+
+@router.post("/login/2fa")
+def login_2fa(req: MfaLoginRequest, request: Request, response: Response):
+    """Second step of sign-in: a code from the authenticator app, or one of the recovery codes."""
+    with _db() as c:
+        ch = c.execute("SELECT * FROM mfa_challenges WHERE token_hash=? AND expires_at > ?",
+                       (_sha(req.mfa_token), time.time())).fetchone()
+        row = c.execute("SELECT * FROM users WHERE id=?", (ch["user_id"],)).fetchone() if ch else None
+    if not ch or not row or not row["totp_secret"]:
+        raise HTTPException(401, "This sign-in has expired. Enter your email and password again.")
+    uid = row["id"]
+    if ch["attempts"] >= MFA_MAX_ATTEMPTS or _throttled(f"mfa:{uid}"):
+        with _db() as c:
+            c.execute("DELETE FROM mfa_challenges WHERE token_hash=?", (_sha(req.mfa_token),))
+        raise HTTPException(429, "Too many wrong codes. Wait 15 minutes, then sign in again.")
+    used_recovery = False
+    if not _use_totp(uid, row["totp_secret"], row["totp_last_step"], req.code):
+        used_recovery = _use_recovery_code(uid, req.code)
+        if not used_recovery:
+            with _db() as c:
+                c.execute("UPDATE mfa_challenges SET attempts = attempts + 1 WHERE token_hash=?", (_sha(req.mfa_token),))
+            _record_fail(f"mfa:{uid}")
+            _audit(request, "mfa_failed", uid)
+            raise HTTPException(401, "That code is not right. Check that your phone's clock is correct and try again.")
+    with _db() as c:
+        c.execute("DELETE FROM mfa_challenges WHERE token_hash=?", (_sha(req.mfa_token),))
+    _start_session(response, uid, bool(ch["remember"]))
+    _audit(request, "recovery_code_used" if used_recovery else "login", uid)
+    return _public(row) | {"last_login": time.time()}
+
+
+# ------------------------------------------------------------------ forgotten password
+class ForgotRequest(BaseModel):
+    email: str = Field(max_length=254)
+
+
+class ResetRequest(BaseModel):
+    token: str = Field(max_length=128)
+    new_password: str = Field(max_length=256)
+
+
+FORGOT_MESSAGE = ("If an account exists for that email, a reset link is on its way. It works once, within 30 minutes. "
+                  "Check your spam folder if it does not arrive.")
+
+
+@router.post("/forgot")
+def forgot_password(req: ForgotRequest, request: Request):
+    """Sends a single-use reset link. Answers the same way whether or not the email has an account."""
+    email = req.email.strip().lower()
+    keys = ("forgot-ip:" + _client_ip(request), "forgot:" + email)
+    if _throttled(*keys, limit=5):
+        raise HTTPException(429, "Too many reset requests. Wait 15 minutes and try again.")
+    _record_fail(*keys)  # also stops anyone flooding a person's inbox with reset emails
+    with _db() as c:
+        row = c.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
+    if row:
+        # links are built from MOMO_PUBLIC_URL, never from the request's Host header (which can be forged);
+        # in console mode (no SMTP) the link only goes to the server log, so the request address is safe to use
+        base = mailer.PUBLIC_URL or ("" if mailer.configured() else str(request.base_url).rstrip("/"))
+        if not base:
+            log.error("password reset not sent: set MOMO_PUBLIC_URL when MOMO_SMTP_HOST is configured")
+        else:
+            token = secrets.token_urlsafe(32)
+            with _db() as c:
+                c.execute("DELETE FROM reset_tokens WHERE user_id=? OR expires_at < ?", (row["id"], time.time()))
+                c.execute("INSERT INTO reset_tokens VALUES (?,?,?)", (_sha(token), row["id"], time.time() + RESET_TTL))
+            # the token travels after '#', so it is never sent to the server in logs or Referer headers
+            mailer.send_password_reset(row["email"], row["name"], f"{base}/#reset={token}", RESET_TTL // 60)
+            _audit(request, "password_reset_requested", row["id"])
+    return {"ok": True, "message": FORGOT_MESSAGE}
+
+
+@router.post("/reset")
+def reset_password(req: ResetRequest, request: Request):
+    ip_key = "reset:" + _client_ip(request)
+    if _throttled(ip_key):
+        raise HTTPException(429, "Too many attempts. Wait 15 minutes and ask for a new link.")
+    with _db() as c:
+        t = c.execute("SELECT * FROM reset_tokens WHERE token_hash=? AND expires_at > ?",
+                      (_sha(req.token), time.time())).fetchone()
+        row = c.execute("SELECT * FROM users WHERE id=?", (t["user_id"],)).fetchone() if t else None
+    if not t or not row:
+        _record_fail(ip_key)
+        raise HTTPException(400, "This reset link is invalid, already used or expired. Ask for a new one.")
+    _check_password(req.new_password, row["email"], row["name"])  # checked first, so a weak choice can be retried
+    with _db() as c:
+        if c.execute("DELETE FROM reset_tokens WHERE token_hash=?", (_sha(req.token),)).rowcount != 1:
+            raise HTTPException(400, "This reset link is invalid, already used or expired. Ask for a new one.")
+        c.execute("DELETE FROM reset_tokens WHERE user_id=?", (row["id"],))
+        c.execute("UPDATE users SET password_hash=? WHERE id=?", (hash_password(req.new_password), row["id"]))
+        c.execute("DELETE FROM auth_sessions WHERE user_id=?", (row["id"],))   # sign out everywhere
+        c.execute("DELETE FROM mfa_challenges WHERE user_id=?", (row["id"],))
+    _audit(request, "password_reset", row["id"])
+    # no automatic sign-in: the person signs in with the new password (and their authenticator, if enabled)
+    return {"ok": True, "mfa_enabled": bool(row["totp_secret"])}
 
 
 @router.post("/logout")
@@ -470,11 +632,113 @@ def change_password(req: PasswordRequest, request: Request):
         raise HTTPException(422, "Choose a password different from your current one.")
     with _db() as c:
         c.execute("UPDATE users SET password_hash=? WHERE id=?", (hash_password(req.new_password), uid))
-        # sign out every other browser; keep this one
+        # sign out every other browser; keep this one. Outstanding reset links stop working too.
         keep = _sha(request.cookies.get(COOKIE, ""))
         c.execute("DELETE FROM auth_sessions WHERE user_id=? AND token_hash<>?", (uid, keep))
+        c.execute("DELETE FROM reset_tokens WHERE user_id=?", (uid,))
     _audit(request, "password_changed", uid)
     return {"ok": True}
+
+
+# ------------------------------------------------------------------ two-step sign-in management
+class PasswordConfirm(BaseModel):
+    password: str = Field(max_length=256)
+
+
+class CodeRequest(BaseModel):
+    code: str = Field(max_length=32)
+
+
+class DisableMfaRequest(BaseModel):
+    password: str = Field(max_length=256)
+    code: str = Field(max_length=32)
+
+
+def _browser_user(request: Request) -> dict:
+    user = current_user(request)
+    if user.get("via") != "session":
+        raise HTTPException(403, "Two-step sign-in can only be changed from a signed-in browser session.")
+    return user
+
+
+@router.get("/2fa")
+def mfa_status(request: Request):
+    uid = current_user(request)["id"]
+    with _db() as c:
+        row = c.execute("SELECT totp_secret FROM users WHERE id=?", (uid,)).fetchone()
+        left = c.execute("SELECT COUNT(*) FROM recovery_codes WHERE user_id=? AND used_at IS NULL", (uid,)).fetchone()[0]
+    return {"enabled": bool(row["totp_secret"]), "recovery_codes_left": left}
+
+
+@router.post("/2fa/setup")
+def mfa_setup(req: PasswordConfirm, request: Request):
+    """Step 1: confirm the password, get a new secret to scan. Nothing changes until /2fa/enable succeeds."""
+    user = _browser_user(request)
+    _confirm_password(request, user["id"], req.password, "password_failed")
+    if user["mfa_enabled"]:
+        raise HTTPException(409, "Two-step sign-in is already on. Turn it off first to set up a new phone.")
+    secret = mfa.new_secret()
+    with _db() as c:
+        c.execute("UPDATE users SET totp_pending=? WHERE id=?", (secret, user["id"]))
+    return {"secret": secret, "uri": mfa.provisioning_uri(secret, user["email"])}
+
+
+@router.post("/2fa/enable")
+def mfa_enable(req: CodeRequest, request: Request):
+    """Step 2: prove the app works by entering its current code. Returns 8 recovery codes, shown once."""
+    user = _browser_user(request)
+    with _db() as c:
+        pending = c.execute("SELECT totp_pending FROM users WHERE id=?", (user["id"],)).fetchone()["totp_pending"]
+    if not pending:
+        raise HTTPException(400, "Start the set-up again: no new key is waiting to be confirmed.")
+    step = mfa.verify(pending, req.code, None)
+    if step is None:
+        _audit(request, "mfa_failed", user["id"])
+        raise HTTPException(422, "That code is not right. Enter the 6 digits your app shows now.")
+    codes = mfa.new_recovery_codes()
+    with _db() as c:
+        c.execute("UPDATE users SET totp_secret=?, totp_pending=NULL, totp_last_step=? WHERE id=?",
+                  (pending, step, user["id"]))
+        c.execute("DELETE FROM recovery_codes WHERE user_id=?", (user["id"],))
+        c.executemany("INSERT INTO recovery_codes (code_hash, user_id) VALUES (?,?)",
+                      [(mfa.recovery_hash(k), user["id"]) for k in codes])
+    _audit(request, "mfa_enabled", user["id"])
+    return {"enabled": True, "recovery_codes": codes}
+
+
+@router.post("/2fa/disable")
+def mfa_disable(req: DisableMfaRequest, request: Request):
+    user = _browser_user(request)
+    _confirm_password(request, user["id"], req.password, "password_failed")
+    with _db() as c:
+        row = c.execute("SELECT totp_secret, totp_last_step FROM users WHERE id=?", (user["id"],)).fetchone()
+    if not row["totp_secret"]:
+        return {"enabled": False}
+    if not (_use_totp(user["id"], row["totp_secret"], row["totp_last_step"], req.code)
+            or _use_recovery_code(user["id"], req.code)):
+        _audit(request, "mfa_failed", user["id"])
+        raise HTTPException(422, "That code is not right. Enter the code from your app, or a recovery code.")
+    with _db() as c:
+        c.execute("UPDATE users SET totp_secret=NULL, totp_pending=NULL, totp_last_step=NULL WHERE id=?", (user["id"],))
+        c.execute("DELETE FROM recovery_codes WHERE user_id=?", (user["id"],))
+    _audit(request, "mfa_disabled", user["id"])
+    return {"enabled": False}
+
+
+@router.post("/2fa/recovery-codes")
+def mfa_new_recovery_codes(req: PasswordConfirm, request: Request):
+    """Replaces all recovery codes (old ones stop working). Shown once."""
+    user = _browser_user(request)
+    _confirm_password(request, user["id"], req.password, "password_failed")
+    if not user["mfa_enabled"]:
+        raise HTTPException(400, "Turn on two-step sign-in first.")
+    codes = mfa.new_recovery_codes()
+    with _db() as c:
+        c.execute("DELETE FROM recovery_codes WHERE user_id=?", (user["id"],))
+        c.executemany("INSERT INTO recovery_codes (code_hash, user_id) VALUES (?,?)",
+                      [(mfa.recovery_hash(k), user["id"]) for k in codes])
+    _audit(request, "recovery_codes_regenerated", user["id"])
+    return {"recovery_codes": codes}
 
 
 @router.post("/api-key")

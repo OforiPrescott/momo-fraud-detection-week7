@@ -2,7 +2,7 @@
 
 This document explains how the MoMo Fraud & Intrusion Detection platform protects the people who sign up
 to it, the data they analyse and the model itself. Every control listed here is checked by an automated
-test in `tests/test_security.py`, which runs on every push (see `.github/workflows/ci.yml`).
+test in `tests/test_security.py` or `tests/test_account_recovery.py`, which run on every push (see `.github/workflows/ci.yml`).
 
 ## 1. How your credentials are stored
 
@@ -13,6 +13,9 @@ test in `tests/test_security.py`, which runs on every push (see `.github/workflo
 | Password | A one-way hash only | PBKDF2-HMAC-SHA256, **600,000 iterations** (the OWASP recommendation for this algorithm), with a **unique random 16-byte salt per user**. Two users with the same password get completely different hashes. |
 | Session (staying signed in) | SHA-256 hash of a random token | A 256-bit random token is placed in your browser in a cookie marked **HttpOnly** (page scripts cannot read it) and **SameSite=Lax** (not sent on cross-site requests), and **Secure** when the site runs over HTTPS. The database holds only the token's hash, so a copy of the database cannot be used to impersonate anyone. |
 | API key | SHA-256 hash + last 4 characters | The full key is shown once, when created. It cannot be recovered afterwards, only replaced. |
+| Two-step sign-in secret | The authenticator secret | A 160-bit random secret shared with your authenticator app. It has to be kept in a usable form to check your codes, so it is never shown again, never returned by the API, and protected with the database file (see section 6). |
+| Recovery codes | SHA-256 hashes | 8 single-use codes shown once when two-step sign-in is turned on. |
+| Password-reset link | SHA-256 hash of the token | A 256-bit random token, valid for 30 minutes and for one use only. |
 | Name, email, organisation | Plain text | Needed to show your profile. Control characters are stripped and lengths are limited. |
 | Uploaded transaction data | **Nothing** | Files are analysed in memory and never written to disk. They disappear when the server restarts. |
 
@@ -32,6 +35,17 @@ own database connector.
   password and deleting an account. Sign-ups are limited to 30 per network address per 15 minutes.
 - **No account enumeration on sign-in.** A wrong email and a wrong password give the same message and take
   the same time to answer (a dummy hash is computed when the email does not exist).
+- **Two-step sign-in (optional, recommended).** Each user can require a 6-digit code from an authenticator
+  app (Google Authenticator, Microsoft Authenticator, Authy and others; TOTP, RFC 6238) on top of their
+  password. With it on, a correct password alone never creates a session: it opens a 5-minute challenge that
+  allows 5 wrong codes. Codes cannot be replayed, one 30-second step of clock drift is tolerated, and 8
+  single-use recovery codes cover a lost phone. Turning it off needs both the password and a current code.
+- **Forgotten password.** "Forgot password?" emails a single-use link valid for 30 minutes. The answer is
+  identical whether or not the email has an account, requests are limited to 5 per email and per network
+  address per 15 minutes (so nobody can flood an inbox), the link is built from `MOMO_PUBLIC_URL` and never
+  from the request's Host header (which an attacker could forge), and the token travels after `#` so it never
+  appears in server logs or Referer headers. Using it ends every session, invalidates other links, and does
+  **not** skip two-step sign-in.
 - **Session control.** Sessions last 24 hours, or 30 days with "Keep me signed in". Changing your password
   signs out every other device. "Sign out of all devices" ends every session at once.
 - **Security activity log.** Sign-ins, failed attempts, password changes, API key changes and sign-outs are
@@ -79,14 +93,23 @@ own database connector.
    already sets `MOMO_ALLOW_PRIVATE_HOSTS=0` and `MOMO_ALLOW_SERVER_FILES=0`.
 3. Set `MOMO_ALLOW_REGISTRATION=0` once your users have signed up, if the platform is not meant to be open.
 4. Set `MOMO_API_DOCS=0` to hide the interactive API documentation if you do not need it.
-5. Back up the accounts database regularly and keep the copy private. Without Docker: copy `var/momo.db`
+5. Configure email so "Forgot password?" works: `MOMO_SMTP_HOST`, `MOMO_SMTP_PORT` (587 or 465),
+   `MOMO_SMTP_USER`, `MOMO_SMTP_PASSWORD`, `MOMO_SMTP_FROM`, and **`MOMO_PUBLIC_URL`** (the address users
+   open, e.g. `https://momo.example.org`; reset emails are not sent without it). Without SMTP the platform runs
+   in console mode: reset links are written to the server log for the operator to pass on.
+6. Encourage everyone, and especially anyone handling real customer data, to turn on two-step sign-in.
+7. Back up the accounts database regularly and keep the copy private. Without Docker: copy `var/momo.db`
    while the server is stopped. With Docker: `docker compose cp momo-fraud-detection:/app/var/momo.db ./momo-backup.db`.
-6. Run `pip-audit -r requirements.txt` from time to time to check dependencies for known vulnerabilities
-   (CI does this on every push).
+8. Run `pip-audit -r requirements.txt` and `npm audit` (in `frontend/`) from time to time to check
+   dependencies for known vulnerabilities (CI runs pip-audit on every push).
 
 ## 6. Known limitations
 
-- There is no email-based password reset or two-factor authentication yet.
+- Two-step sign-in secrets must be readable by the server to check codes, so they are stored as issued, not
+  hashed. Anyone holding a copy of `var/momo.db` could generate codes for users who also lose their password.
+  Keep the database and its backups private (file permissions, encrypted disk or volume).
+- Two-step sign-in is optional per user; there is no setting yet that forces it for everyone.
+- In console mode (no SMTP), reset links appear in the server log; protect that log like a password.
 - Rate limits are kept in memory per server process; behind several server processes, also rate-limit at
   the reverse proxy.
 - The REST API connector re-checks the connected address before reading a response, but the request itself
