@@ -272,3 +272,12 @@ input:disabled { background: #f3f6f9; color: var(--muted); }
   .features, .stats { display: none; } .auth .pitch h1 { font-size: 26px; } .auth .pitch > p { font-size: 14.5px; }
   .auth .panel { padding: 20px 16px 40px; } .authcard { padding: 22px 18px; }
 }
+
+/* ---------- plain-language explainer, drift, security activity ---------- */
+.explain { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px 28px; margin: 0; }
+.explain > div { border-top: 1px solid var(--line); padding-top: 12px; }
+.explain dt { display: flex; justify-content: space-between; gap: 12px; font-weight: 650; font-size: 14px; }
+.explain dt b { font-family: var(--serif); font-size: 18px; color: var(--blue); white-space: nowrap; }
+.explain dd { margin: 6px 0 0; color: #2d3947; line-height: 1.65; font-size: 13.5px; }
+.badge.drift-stable { background: var(--low-bg); color: #1b6e63; } .badge.drift-moderate { background: var(--med-bg); color: #8a5e00; } .badge.drift-major { background: var(--crit-bg); color: var(--crit); }
+tr.alert-row td { background: #fdf3f5; color: #7d1b2c; }

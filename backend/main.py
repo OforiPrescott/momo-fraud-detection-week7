@@ -19,6 +19,7 @@ frontend/, this same server also serves the dashboard at http://localhost:8000
 import asyncio
 import io
 import json
+import logging
 import os
 import time
 from contextlib import asynccontextmanager
@@ -30,9 +31,10 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request,
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from . import auth, features, insights, overview, scoring, sessions, sources, stream
+from . import auth, drift, features, insights, overview, scoring, sessions, sources, stream
+from .security import SecurityHeaders, csv_safe
 from .schema import KNOWN_TYPES
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -70,14 +72,20 @@ def _forget_user(uid: int):
 
 auth.ON_DELETE.append(_forget_user)
 
-app = FastAPI(title="MoMo Fraud & Intrusion Detection API", lifespan=lifespan, dependencies=[Depends(auth.guard)])
+logging.basicConfig(level=os.environ.get("MOMO_LOG_LEVEL", "INFO"),
+                    format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+_DOCS = os.environ.get("MOMO_API_DOCS", "1") == "1"  # set 0 to hide /docs on a public server
+app = FastAPI(title="MoMo Fraud & Intrusion Detection API", lifespan=lifespan, dependencies=[Depends(auth.guard)],
+              docs_url="/docs" if _DOCS else None, redoc_url=None, openapi_url="/openapi.json" if _DOCS else None)
 app.include_router(auth.router)
 User = Depends(auth.current_user)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=os.environ.get("MOMO_CORS_ORIGINS", "*").split(","),  # restrict this in deployment
-    allow_methods=["GET", "POST"], allow_headers=["*"],
-)
+# Same-origin by default: the dashboard is served by this server, so no other website needs to call the API.
+# List extra sites in MOMO_CORS_ORIGINS only if you host a separate frontend (cookies are never sent cross-site).
+_CORS = [o.strip() for o in os.environ.get("MOMO_CORS_ORIGINS", "").split(",") if o.strip()]
+if _CORS:
+    app.add_middleware(CORSMiddleware, allow_origins=_CORS, allow_methods=["GET", "POST"],
+                       allow_headers=["Content-Type", "X-API-Key"])
+app.add_middleware(SecurityHeaders)
 
 
 def _clean(o):
@@ -214,6 +222,7 @@ def _analyse(user: dict, df_raw: pd.DataFrame, source: dict, notes: list, thresh
         raise HTTPException(404, str(e))
     frame = frame.copy()
     frame["risk"] = risk.astype("float32")
+    meta["drift"] = drift.compute(X, meta["feature_sources"])
     meta["notes"] = notes + meta["notes"]
     y = frame["label"].to_numpy() if meta["label_name"] else None
     curves = insights.build_curves(risk, frame["amount"].to_numpy(dtype=float), y)
@@ -225,12 +234,18 @@ def _respond(s: sessions.Session, threshold: float, cur: str, took: float | None
     res = insights.analyze(s.frame, s.meta, s.curves, threshold, cur=cur, window_label=s.source.get("name"))
     res["analysis_id"] = s.id
     res["source"] = s.source
+    d = s.meta.get("drift") or {"available": False, "features": []}
+    drift_finding = drift.insight(d)
+    if drift_finding:  # place it after critical/high findings, before the informational ones
+        order = {"critical": 0, "high": 1, "medium": 2, "info": 3, "good": 4}
+        res["insights"] = sorted(res["insights"] + [drift_finding], key=lambda i: order.get(i["severity"], 3))
     res["data_quality"] = {
         "coverage_pct": s.meta["coverage_pct"], "warnings": s.meta["warnings"], "notes": s.meta["notes"],
         "features": [{"feature": f, "label": scoring.LABELS.get(f, f), "source": src,
                       "importance": round(s.meta["importance"][f], 4)}
                      for f, src in sorted(s.meta["feature_sources"].items(), key=lambda kv: -s.meta["importance"][kv[0]])],
         "label_name": s.meta["label_name"], "rule_columns": s.meta["rule_columns"],
+        "drift": d,
     }
     if took is not None:
         res["took_seconds"] = round(took, 2)
@@ -256,17 +271,17 @@ def analyze_upload(file: UploadFile = File(...), events: Optional[UploadFile] = 
 
 
 class DbRequest(BaseModel):
-    dialect: str = "sqlite"
-    host: str = ""
-    port: Optional[int] = None
-    database: str = ""
-    username: str = ""
-    password: str = ""
-    table: str = ""
-    query: str = ""
-    max_rows: Optional[int] = None
+    dialect: str = Field("sqlite", max_length=20)
+    host: str = Field("", max_length=255)
+    port: Optional[int] = Field(None, ge=1, le=65535)
+    database: str = Field("", max_length=1024)
+    username: str = Field("", max_length=255)
+    password: str = Field("", max_length=1024)
+    table: str = Field("", max_length=255)
+    query: str = Field("", max_length=20_000)
+    max_rows: Optional[int] = Field(None, ge=1)
     threshold: float = 0.5
-    currency: str = ""
+    currency: str = Field("", max_length=10)
 
 
 @app.post("/api/analyze/database")
@@ -281,13 +296,13 @@ def analyze_database(req: DbRequest, user: dict = User):
 
 
 class ApiRequest(BaseModel):
-    url: str
-    method: str = "GET"
-    headers: str = ""
-    body: str = ""
-    records_path: str = ""
+    url: str = Field(max_length=2048)
+    method: str = Field("GET", pattern="^(GET|POST|get|post)$")
+    headers: str = Field("", max_length=8_000)
+    body: str = Field("", max_length=200_000)
+    records_path: str = Field("", max_length=255)
     threshold: float = 0.5
-    currency: str = ""
+    currency: str = Field("", max_length=10)
 
 
 @app.post("/api/analyze/api")
@@ -393,7 +408,11 @@ def export_csv(sid: str, threshold: float = 0.5, type: str = "", q: str = "", us
     s = _session(sid, user)
     sub = _filtered(s, threshold, type, q, 0.0).sort_values("risk", ascending=False)
     cols = [c for c in ["row_id", "step", "type", "amount", "nameOrig", "nameDest", "risk", "label"] if c in sub]
-    buf = io.StringIO(); sub[cols].to_csv(buf, index=False)
+    out = sub[cols].copy()
+    for c in out.columns:  # text cells starting with = + - @ would run as formulas in Excel
+        if out[c].dtype == object or pd.api.types.is_string_dtype(out[c]):
+            out[c] = out[c].map(csv_safe)
+    buf = io.StringIO(); out.to_csv(buf, index=False)
     return Response(buf.getvalue(), media_type="text/csv",
                     headers={"Content-Disposition": f'attachment; filename="flagged_{sid}.csv"'})
 

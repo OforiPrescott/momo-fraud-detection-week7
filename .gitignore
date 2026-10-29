@@ -28,3 +28,6 @@ tests/_tmp_auth.db*
 
 # User accounts database (created on first run)
 var/
+
+# Test caches
+.pytest_cache/

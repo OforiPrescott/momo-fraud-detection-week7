@@ -1,0 +1,4 @@
+# Development and CI: tests and dependency vulnerability scanning
+-r requirements.txt
+pytest>=8
+pip-audit>=2.7

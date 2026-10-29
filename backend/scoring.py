@@ -6,6 +6,8 @@ every transaction, each feature gets a signed contribution to the final
 risk score. That is what turns "risk 0.97" into "because the sender used 3
 devices and the amount was 6x their usual amount".
 """
+import hashlib
+import hmac
 import os
 import threading
 import warnings
@@ -33,10 +35,36 @@ def bundle():
                 raise ModelMissing(
                     "Model not found. Run src/train_baseline_model.py or src/tune_and_compare_models.py first."
                 )
+            verify_model_file(MODEL_PATH)
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 _bundle = joblib.load(MODEL_PATH)
         return _bundle
+
+
+def file_sha256(path: str) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def verify_model_file(path: str):
+    """joblib files are Python pickles: loading one runs any code inside it. So the model is loaded only if
+    its SHA-256 matches the checksum written by the training script (model.joblib.sha256), or the one given
+    in MOMO_MODEL_SHA256. A swapped or corrupted model file is refused instead of executed."""
+    expected = os.environ.get("MOMO_MODEL_SHA256", "").strip().lower()
+    sidecar = path + ".sha256"
+    if not expected and os.path.exists(sidecar):
+        with open(sidecar) as f:
+            expected = (f.read().split() or [""])[0].lower()
+    if not expected:
+        raise ModelMissing(f"The model has no checksum ({os.path.basename(sidecar)}), so it was not loaded. "
+                           "Re-run the training script, which writes it.")
+    if not hmac.compare_digest(file_sha256(path), expected):
+        raise ModelMissing("The model file failed its integrity check (its SHA-256 does not match the recorded "
+                           "checksum), so it was not loaded. Restore the original file or retrain the model.")
 
 
 def feature_columns():

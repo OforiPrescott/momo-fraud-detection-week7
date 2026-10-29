@@ -54,6 +54,41 @@ def _records_to_frame(obj, path: str | None = None) -> pd.DataFrame:
     return pd.json_normalize(obj)
 
 
+MAX_EXPANDED = MAX_UPLOAD_MB * 4 * 1024 * 1024  # largest size a compressed upload may expand to
+
+
+def _decompress(fileobj, comp: str):
+    import gzip
+    import zipfile
+
+    out = io.BytesIO()
+    try:
+        if comp == "gzip":
+            src = gzip.GzipFile(fileobj=fileobj)
+        else:
+            zf = zipfile.ZipFile(fileobj)
+            members = [i for i in zf.infolist() if not i.is_dir()]
+            if len(members) != 1:
+                raise SourceError("A .zip upload must contain exactly one data file.")
+            if members[0].file_size > MAX_EXPANDED:
+                raise SourceError(f"The file inside the zip is larger than {MAX_EXPANDED // 2**20} MB uncompressed.")
+            src = zf.open(members[0])
+        while True:
+            block = src.read(1 << 20)
+            if not block:
+                break
+            out.write(block)
+            if out.tell() > MAX_EXPANDED:
+                raise SourceError(f"The file expands to more than {MAX_EXPANDED // 2**20} MB when uncompressed, "
+                                  "which is over the limit.")
+    except SourceError:
+        raise
+    except Exception as e:
+        raise SourceError(f"Could not decompress the file: {str(e)[:160]}")
+    out.seek(0)
+    return out
+
+
 def load_file(fileobj, filename: str):
     """Parse an uploaded file. Returns (DataFrame, notes)."""
     name = (filename or "").lower()
@@ -68,6 +103,8 @@ def load_file(fileobj, filename: str):
     comp = "gzip" if name.endswith(".gz") else "zip" if name.endswith(".zip") else None
     base = re.sub(r"\.(gz|zip)$", "", name)
     ext = os.path.splitext(base)[1]
+    if comp:  # decompress ourselves, with a hard cap, so a tiny "zip bomb" cannot exhaust memory
+        fileobj, comp = _decompress(fileobj, comp), None
     try:
         if ext in (".csv", ".txt", ".tsv", ""):
             if ext == ".csv":
@@ -82,9 +119,6 @@ def load_file(fileobj, filename: str):
             df = pd.read_json(fileobj, lines=True, compression=comp)
         elif ext == ".json":
             raw = fileobj.read()
-            if comp == "gzip":
-                import gzip
-                raw = gzip.decompress(raw)
             try:
                 df = _records_to_frame(json.loads(raw))
             except json.JSONDecodeError:
@@ -182,6 +216,25 @@ def _check_host(host: str):
             raise SourceError("Private and local addresses are disabled (set MOMO_ALLOW_PRIVATE_HOSTS=1 to allow).")
 
 
+def _ip_allowed(ip) -> bool:
+    if ip.is_link_local or ip.is_multicast or ip.is_reserved or ip.is_unspecified:
+        return False
+    return ALLOW_PRIVATE_HOSTS or not (ip.is_private or ip.is_loopback)
+
+
+def _check_peer(response):
+    """Re-checks the IP the connection really went to. Closes the DNS-rebinding gap where a hostname resolves
+    to a public address when checked and to an internal one when connected."""
+    try:
+        stream = response.extensions.get("network_stream")
+        addr = stream.get_extra_info("server_addr") if stream else None
+    except Exception:
+        addr = None
+    if addr:
+        if not _ip_allowed(ipaddress.ip_address(addr[0])):
+            raise SourceError("The API's address resolved to a blocked (internal or reserved) network.")
+
+
 def load_api(cfg: dict):
     import httpx
 
@@ -202,21 +255,29 @@ def load_api(cfg: dict):
             body = json.loads(cfg["body"])
         except json.JSONDecodeError:
             raise SourceError("The request body must be valid JSON.")
+    limit = MAX_UPLOAD_MB * 1024 * 1024
     try:
         with httpx.Client(timeout=30, follow_redirects=False) as c:
-            r = c.request(method, url, headers=headers, json=body)
+            with c.stream(method, url, headers=headers, json=body) as r:
+                _check_peer(r)  # the address actually connected to, not just the one checked before
+                if r.status_code >= 400:
+                    raise SourceError(f"The API answered {r.status_code}.")
+                if int(r.headers.get("content-length") or 0) > limit:
+                    raise SourceError("The API response is larger than the upload limit.")
+                buf = bytearray()
+                for chunk in r.iter_bytes():  # stop reading as soon as the limit is passed
+                    buf += chunk
+                    if len(buf) > limit:
+                        raise SourceError("The API response is larger than the upload limit.")
+                ctype = r.headers.get("content-type", "")
     except httpx.HTTPError as e:
         raise SourceError(f"Could not reach the API: {str(e)[:160]}")
-    if r.status_code >= 400:
-        raise SourceError(f"The API answered {r.status_code}.")
-    if len(r.content) > MAX_UPLOAD_MB * 1024 * 1024:
-        raise SourceError("The API response is larger than the upload limit.")
-    ctype = r.headers.get("content-type", "")
+    content = bytes(buf)
     try:
         if "csv" in ctype or url.lower().endswith(".csv"):
-            df = pd.read_csv(io.BytesIO(r.content))
+            df = pd.read_csv(io.BytesIO(content))
         else:
-            df = _records_to_frame(r.json(), (cfg.get("records_path") or "").strip() or None)
+            df = _records_to_frame(json.loads(content), (cfg.get("records_path") or "").strip() or None)
     except SourceError:
         raise
     except Exception as e:

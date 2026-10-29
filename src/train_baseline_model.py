@@ -117,6 +117,11 @@ def run(features_path: str, model_out: str, metrics_out: str, seed: int = 42):
     print("\n" + classification_report(y_test, y_pred, target_names=["normal", "attack"]))
 
     joblib.dump({"model": model, "feature_columns": list(X.columns)}, model_out)
+    # checksum the backend verifies before loading (a joblib file is a pickle and can carry code)
+    import hashlib
+    with open(model_out, "rb") as fh, open(f"{model_out}.sha256", "w") as out:
+        out.write(hashlib.sha256(fh.read()).hexdigest() + "
+")
     with open(metrics_out, "w") as f:
         json.dump(metrics, f, indent=2)
     print(f"[{time.time()-t0:.1f}s] saved model to {model_out}, metrics to {metrics_out}")

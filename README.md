@@ -77,18 +77,32 @@ uvicorn backend.main:app --port 8000
 Then open http://localhost:8000 and **create an account** on the sign-in page. Every visitor registers
 their own account; their analyses and live monitor are private to them.
 
-### Accounts and security
+### Accounts, security and trust
 
 * Register, sign in (optionally "keep me signed in for 30 days"), sign out, sign out of all devices,
   edit profile, change password and delete the account, all from the dashboard (**Account** page).
-* Passwords are stored as salted PBKDF2-SHA256 hashes; sessions are random tokens in an HttpOnly,
-  SameSite cookie (only their hash is stored). Repeated failed sign-ins are rate-limited.
-* Every `/api/` route except health and sign-in requires an account. Uploaded datasets, analyses and the
-  live monitor belong to the user who created them; other users cannot see them.
-* Personal **API keys** (Account page) let a user's own systems push transactions to `/api/ingest` or call
-  the analysis endpoints with an `X-API-Key` header. Only a hash of the key is stored.
-* Accounts live in a SQLite file at `var/momo.db` (created on first run, never committed; set
-  `MOMO_DB_PATH` to move it). Back this file up to keep your users.
+* **Passwords are never stored**: only a salted PBKDF2-SHA256 hash (600,000 iterations). Sessions and API
+  keys are stored only as SHA-256 hashes. Weak and common passwords are refused; repeated failed sign-ins
+  are paused; every sign-in, failure and key change appears in the user's **Recent security activity**.
+* Every `/api/` route except health and sign-in requires an account, and each user's analyses and live
+  monitor are private to them. Cross-site requests are refused, strict security headers are sent, uploads
+  and connectors are size- and address-limited, and exported CSVs cannot run spreadsheet formulas.
+* The model loads only if its **SHA-256 checksum** matches, each analysis checks **data drift** against
+  the training data, and a **"What these numbers mean"** panel explains every result in plain language.
+* Full details: [SECURITY.md](SECURITY.md) (how credentials are stored, every protection, deployment
+  checklist) and [MODEL_CARD.md](MODEL_CARD.md) (what the model is for, how well it works, its limits).
+* User guide: [docs/USER_MANUAL.md](docs/USER_MANUAL.md).
+
+### Tests
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest tests -q --ignore=tests/smoke_test.py   # 43 security, ML and API tests
+python tests/smoke_test.py                                # end-to-end walkthrough of every feature
+```
+
+CI (`.github/workflows/ci.yml`) runs them on Linux, Windows and macOS for Python 3.11 to 3.13 on every push,
+builds the dashboard and scans dependencies for known vulnerabilities.
 
 ## Project layout
 
@@ -265,6 +279,7 @@ cd frontend && npm install && npm run dev        # http://localhost:5173, talks 
 #    npm run build   rebuilds frontend/dist for the single-server setup
 
 # 10. Check everything works
+python -m pytest tests -q --ignore=tests/smoke_test.py
 python tests/smoke_test.py
 ```
 
@@ -292,7 +307,11 @@ Environment variables:
 | `MOMO_ALLOW_PRIVATE_HOSTS` | 1 | Set to 0 on a shared server so the API/database connectors cannot reach internal addresses |
 | `MOMO_ALLOW_SERVER_FILES` | 1 | Set to 0 on a shared server so visitors cannot read SQLite files on it |
 | `MOMO_MAX_SESSIONS` | 24 | Analyses kept in memory across all users (3 per user) |
-| `MOMO_CORS_ORIGINS` | `*` | Restrict which other sites may call the API |
+| `MOMO_CORS_ORIGINS` | none | Other websites allowed to call the API (same-origin only by default) |
+| `MOMO_TRUSTED_ORIGINS` | none | Other origins allowed to send signed-in requests (e.g. a separately hosted frontend) |
+| `MOMO_API_DOCS` | 1 | Set to 0 to hide the interactive API docs at `/docs` |
+| `MOMO_MODEL_SHA256` | from `model.joblib.sha256` | Expected checksum of the model file |
+| `MOMO_LOG_LEVEL` | INFO | Logging detail; security events are logged under `momo.security` |
 
 `docker-compose.yml` already sets the shared-server values.
 

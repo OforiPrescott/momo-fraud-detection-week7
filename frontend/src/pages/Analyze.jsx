@@ -3,6 +3,7 @@ import { get, qs } from "../api";
 import { ByHourChart, ByTypeChart, ScoreHistogram, TradeoffChart } from "../components/Charts";
 import CaseDrawer from "../components/CaseDrawer";
 import DataQuality from "../components/DataQuality";
+import Explainer from "../components/Explainer";
 import FlaggedTable from "../components/FlaggedTable";
 import SourcePanel from "../components/SourcePanel";
 import { Briefing, Card, Findings, Kpi, Kpis, Recommendations, Tabs } from "../components/ui";
@@ -89,6 +90,7 @@ export default function Analyze({ result, setResult, goLive }) {
               </Kpis>
                 <div className="grid g-main">
                   <Card title="Key insights" className="fullwidth"><Findings items={result.insights} /></Card>
+                  <Explainer s={s} ev={ev} dq={result.data_quality} threshold={threshold} cur={currency} />
                 </div>
             </div>
           )}

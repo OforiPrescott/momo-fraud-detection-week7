@@ -1,3 +1,7 @@
 # Shell scripts must keep Unix line endings or macOS/Linux cannot run them; batch files want Windows ones.
 *.sh  text eol=lf
 *.bat text eol=crlf
+
+# The model must stay byte-for-byte identical, or its SHA-256 integrity check fails
+*.joblib binary
+*.sha256 text eol=lf

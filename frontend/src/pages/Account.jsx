@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { get } from "../api";
 import { passwordOk, useAuth } from "../auth";
 import { Card } from "../components/ui";
 import { useToast } from "../toast";
@@ -16,6 +17,9 @@ export default function Account() {
   const [del, setDel] = useState({ open: false, password: "" });
   const [err, setErr] = useState({});
   const [busy, setBusy] = useState("");
+  const [activity, setActivity] = useState(null);
+  const loadActivity = () => get("/api/auth/activity").then(setActivity).catch(() => setActivity([]));
+  useEffect(() => { loadActivity(); }, [busy]);
 
   const run = async (id, fn, ok) => {
     setErr((e) => ({ ...e, [id]: "" })); setBusy(id);
@@ -91,6 +95,20 @@ export default function Account() {
               <pre className="code" style={{ marginTop: 10 }}>{curl}</pre>
             </details>
           </div>
+        </Card>
+
+        <Card title="Recent security activity" sub="Sign-ins, password and API key changes on your account over the last 90 days. If you see something you did not do, change your password and sign out of all devices."
+          right={<button className="btn sm" onClick={loadActivity}>Refresh</button>}>
+          {activity === null ? <p className="muted">Loading...</p> : !activity.length ? <p className="muted">No activity yet.</p> : (
+            <div className="tablewrap"><table>
+              <thead><tr><th>When</th><th>What happened</th><th>Device</th><th>Network address</th></tr></thead>
+              <tbody>{activity.map((a, i) => (
+                <tr key={i} className={/failed|throttled/.test(a.event) ? "alert-row" : ""}>
+                  <td className="num">{date(a.at)}</td><td>{a.label}</td><td>{a.device}</td><td className="num">{a.ip}</td>
+                </tr>
+              ))}</tbody>
+            </table></div>
+          )}
         </Card>
 
         <div className="grid g2">

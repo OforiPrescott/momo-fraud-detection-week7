@@ -22,7 +22,7 @@ export function PasswordInput({ value, onChange, autoComplete, id, placeholder }
 
 const STRENGTH = ["Too weak", "Weak", "Fair", "Good", "Strong"];
 export function StrengthMeter({ pw }) {
-  if (!pw) return <div className="hint">At least 8 characters, with a letter and a number.</div>;
+  if (!pw) return <div className="hint">At least 8 characters with a letter and a number. Avoid common passwords and your own name.</div>;
   const s = passwordStrength(pw);
   return (
     <div className="meter" data-s={s}>
@@ -127,7 +127,7 @@ export default function Auth() {
                 : <>Already have an account? <button type="button" className="link" onClick={() => swap("login")}>Sign in</button></>}
             </p>
           )}
-          <p className="fine"><Icon name="lock" />Passwords are stored as salted hashes. Data you upload is analysed in memory and is visible only to you.</p>
+          <p className="fine"><Icon name="lock" />Your password is never stored, only a salted one-way hash of it. Data you upload is analysed in memory and is visible only to you.</p>
         </form>
       </section>
     </div>

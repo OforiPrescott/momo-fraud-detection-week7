@@ -53,7 +53,11 @@ def prepare(df_raw: pd.DataFrame, events: pd.DataFrame | None = None):
         )
 
     df = df.reset_index(drop=True)
-    df["amount"] = pd.to_numeric(df["amount"], errors="coerce")
+    df["amount"] = pd.to_numeric(df["amount"], errors="coerce").replace([np.inf, -np.inf], np.nan)
+    neg = int((df["amount"] < 0).sum())
+    if neg:  # the model only ever saw positive amounts; reversals/refunds are scored by their size
+        df["amount"] = df["amount"].abs()
+        warnings.append(f"{neg:,} rows had a negative amount (refund or reversal?); they were scored by their size.")
     bad = int(df["amount"].isna().sum())
     if bad:
         df = df[df["amount"].notna()].reset_index(drop=True)
@@ -237,7 +241,12 @@ def prepare(df_raw: pd.DataFrame, events: pd.DataFrame | None = None):
         notes.append(f"Label column '{label_name}' has only one class, so accuracy cannot be measured.")
         label_name = None
 
-    X = df[cols].astype("float32")
+    X = df[cols].astype("float64").clip(-3e38, 3e38).replace([np.inf, -np.inf], np.nan)
+    bad_cells = int(X.isna().sum().sum())
+    if bad_cells:  # impossible values must never reach the model as inf/NaN
+        warnings.append(f"{bad_cells:,} input values were missing or impossible (infinite / too large) and were set to 0.")
+        X = X.fillna(0)
+    X = X.astype("float32")
     keep = [c for c in ["row_id", "step", "hour_of_day", "type", "amount", "nameOrig", "nameDest",
                         "oldbalanceOrg", "newbalanceOrig", "label", "isFraud", "any_attack_flag",
                         "sim_swap_takeover", "pin_sharing_flag", "agent_collusion_flag"] if c in df]

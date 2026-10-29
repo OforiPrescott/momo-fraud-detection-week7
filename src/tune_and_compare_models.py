@@ -131,6 +131,11 @@ def run(features_path: str, model_out: str, comparison_out: str, seed: int = 42)
         json.dump(comparison, f, indent=2)
 
     joblib.dump({"model": tuned_model, "feature_columns": list(X.columns)}, model_out)
+    # checksum the backend verifies before loading (a joblib file is a pickle and can carry code)
+    import hashlib
+    with open(model_out, "rb") as fh, open(f"{model_out}.sha256", "w") as out:
+        out.write(hashlib.sha256(fh.read()).hexdigest() + "
+")
     print(f"[{time.time()-t0:.1f}s] saved tuned model to {model_out}, comparison to {comparison_out}")
 
     print("\n=== MODEL COMPARISON (same held-out test set) ===")
