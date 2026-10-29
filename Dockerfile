@@ -24,8 +24,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Backend code
 COPY backend ./backend
 COPY src ./src
-COPY data ./data 2>/dev/null || true
-COPY reports ./reports 2>/dev/null || true
+COPY reports ./reports
 
 # Frontend code + build
 COPY frontend ./frontend

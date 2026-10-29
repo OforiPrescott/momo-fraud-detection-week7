@@ -10,7 +10,8 @@ data/processed/features.csv
 venv/
 .env
 node_modules/
-frontend/dist/
+# frontend/dist IS committed: it is the ready-built dashboard the API serves,
+# so the project runs with Python alone. Rebuild with `npm run build` after UI changes.
 
 # Python
 __pycache__/

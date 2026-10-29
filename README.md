@@ -39,6 +39,24 @@ simulator's own calibration parameters, and is kept for quick dev runs.
 this README was run against** (`data/raw/paysim_real.csv`, 6,362,620
 transactions).
 
+## Quick start: run the dashboard (no dataset download needed)
+
+The trained model (`backend/model.joblib`), the precomputed dashboard data (`backend/data/`),
+the results (`reports/`) and the built dashboard (`frontend/dist/`) are all in the repo, so
+Python is the only requirement. Node and the Kaggle data are only needed to change the UI or
+retrain the model.
+
+```bash
+git clone https://github.com/OforiPrescott/momo-fraud-detection-week7.git
+cd momo-fraud-detection-week7
+python -m venv venv
+venv\Scripts\activate            # Windows   (macOS/Linux: source venv/bin/activate)
+pip install -r requirements.txt
+uvicorn backend.main:app --port 8000
+```
+
+Open http://localhost:8000. Or, with Docker: `docker compose up --build`.
+
 ## Project layout
 
 ```
@@ -92,7 +110,7 @@ Large generated files are NOT included in this package (regenerate with the comm
 1. Install Python 3.11+ from [python.org/downloads](https://python.org/downloads) if not already installed
    (or use Anaconda — see Week 1 briefing for both routes).
 2. Install [VS Code](https://code.visualstudio.com), then the **Python extension** from the Extensions panel (`Cmd+Shift+X`).
-3. Unzip this project, then in VS Code: `File > Open Folder...` and select the unzipped `momo-fraud-detection` folder.
+3. Clone the repo (`git clone https://github.com/OforiPrescott/momo-fraud-detection-week7.git`), then in VS Code: `File > Open Folder...` and select the cloned `momo-fraud-detection-week7` folder.
 4. Open a terminal in VS Code (``Ctrl+` `` or `Terminal > New Terminal`). It should default to `zsh` or `bash`.
 5. Create and activate a virtual environment, then install dependencies:
    ```bash
@@ -101,7 +119,7 @@ Large generated files are NOT included in this package (regenerate with the comm
    pip install -r requirements.txt
    ```
 6. In VS Code's bottom-right corner, click the Python interpreter selector and choose the one inside `./venv`.
-7. Download the real Kaggle PaySim1 CSV from kaggle.com/datasets/ealaxi/paysim1, rename it to
+7. (Only needed to re-run the training pipeline, not to use the dashboard.) Download the real Kaggle PaySim1 CSV from kaggle.com/datasets/ealaxi/paysim1, rename it to
    `paysim_real.csv`, and place it in `data/raw/`.
 
 ## Setup (VS Code) — Windows
@@ -109,8 +127,8 @@ Large generated files are NOT included in this package (regenerate with the comm
 1. Install Python 3.11+ from [python.org/downloads](https://python.org/downloads). **Check "Add python.exe to PATH"**
    during install, this is unchecked by default and is the most common setup mistake.
 2. Install [VS Code](https://code.visualstudio.com), then the **Python extension** from the Extensions panel (`Ctrl+Shift+X`).
-3. Unzip this project (right-click the `.zip` → "Extract All..."), then in VS Code: `File > Open Folder...`
-   and select the unzipped `momo-fraud-detection` folder.
+3. Clone the repo (`git clone https://github.com/OforiPrescott/momo-fraud-detection-week7.git`), then in VS Code: `File > Open Folder...`
+   and select the cloned `momo-fraud-detection-week7` folder.
 4. Open a terminal in VS Code (``Ctrl+` `` or `Terminal > New Terminal`). It should default to PowerShell.
 5. Create and activate a virtual environment, then install dependencies:
 
@@ -126,7 +144,7 @@ Large generated files are NOT included in this package (regenerate with the comm
    Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
    ```
 6. In VS Code's bottom-right corner, click the Python interpreter selector and choose the one inside `.\venv`.
-7. Download the real Kaggle PaySim1 CSV from kaggle.com/datasets/ealaxi/paysim1, rename it to
+7. (Only needed to re-run the training pipeline, not to use the dashboard.) Download the real Kaggle PaySim1 CSV from kaggle.com/datasets/ealaxi/paysim1, rename it to
    `paysim_real.csv`, and place it in `data\raw\`.
 
 ## Setup (VS Code) — Ubuntu
@@ -137,7 +155,7 @@ Large generated files are NOT included in this package (regenerate with the comm
    sudo apt install -y python3.11 python3.11-venv python3-pip
    ```
 2. Install [VS Code](https://code.visualstudio.com), then the **Python extension** from the Extensions panel (`Ctrl+Shift+X`).
-3. Unzip this project, then in VS Code: `File > Open Folder...` and select the unzipped `momo-fraud-detection` folder.
+3. Clone the repo (`git clone https://github.com/OforiPrescott/momo-fraud-detection-week7.git`), then in VS Code: `File > Open Folder...` and select the cloned `momo-fraud-detection-week7` folder.
 4. Open a terminal in VS Code (`Ctrl+`` ` or `Terminal > New Terminal`).
 5. Create and activate a virtual environment, then install dependencies:
    ```bash
@@ -146,7 +164,7 @@ Large generated files are NOT included in this package (regenerate with the comm
    pip install -r requirements.txt
    ```
 6. In VS Code's bottom-right corner, click the Python interpreter selector and choose the one inside `./venv`.
-7. Download the real Kaggle PaySim1 CSV from kaggle.com/datasets/ealaxi/paysim1, rename it to
+7. (Only needed to re-run the training pipeline, not to use the dashboard.) Download the real Kaggle PaySim1 CSV from kaggle.com/datasets/ealaxi/paysim1, rename it to
    `paysim_real.csv`, and place it in `data/raw/`.
 
 ## Setup (VS Code) — Fedora
@@ -156,7 +174,7 @@ Large generated files are NOT included in this package (regenerate with the comm
    sudo dnf install -y python3.11 python3.11-pip
    ```
 2. Install [VS Code](https://code.visualstudio.com), then the **Python extension** from the Extensions panel (`Ctrl+Shift+X`).
-3. Unzip this project, then in VS Code: `File > Open Folder...` and select the unzipped `momo-fraud-detection` folder.
+3. Clone the repo (`git clone https://github.com/OforiPrescott/momo-fraud-detection-week7.git`), then in VS Code: `File > Open Folder...` and select the cloned `momo-fraud-detection-week7` folder.
 4. Open a terminal in VS Code (`Ctrl+`` ` or `Terminal > New Terminal`).
 5. Create and activate a virtual environment, then install dependencies:
    ```bash
@@ -165,7 +183,7 @@ Large generated files are NOT included in this package (regenerate with the comm
    pip install -r requirements.txt
    ```
 6. In VS Code's bottom-right corner, click the Python interpreter selector and choose the one inside `./venv`.
-7. Download the real Kaggle PaySim1 CSV from kaggle.com/datasets/ealaxi/paysim1, rename it to
+7. (Only needed to re-run the training pipeline, not to use the dashboard.) Download the real Kaggle PaySim1 CSV from kaggle.com/datasets/ealaxi/paysim1, rename it to
    `paysim_real.csv`, and place it in `data/raw/`.
 
 ## Run the full pipeline, in order (same commands on all OSes, from the VS Code terminal)
