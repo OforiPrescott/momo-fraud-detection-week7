@@ -6,6 +6,10 @@ This file only wires things together; each concern lives in its own module:
   scoring.py    model + explanations       insights.py   automatic interpretation
   sources.py    file / database / API      sessions.py   analysed-dataset store
   stream.py     real-time engine + SSE     overview.py   project-level summary
+  auth.py       accounts, sign-in, API keys
+
+Every /api/ route except health and sign-in/registration requires a signed-in user (session cookie
+or personal X-API-Key). Analyses and the live monitor are private to the user who created them.
 
 Run (from the project root):
     uvicorn backend.main:app --reload --port 8000
@@ -22,24 +26,23 @@ from typing import Any, Optional
 
 import numpy as np
 import pandas as pd
-from fastapi import FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import features, insights, overview, scoring, sessions, sources, stream
+from . import auth, features, insights, overview, scoring, sessions, sources, stream
 from .schema import KNOWN_TYPES
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(HERE, "data")
 DIST = os.path.join(HERE, "..", "frontend", "dist")
-INGEST_KEY = os.environ.get("MOMO_INGEST_KEY", "")  # if set, /api/ingest requires header X-API-Key
 
 
 @asynccontextmanager
 async def lifespan(app):
-    stream.hub.loop = asyncio.get_running_loop()
+    stream.LOOP = asyncio.get_running_loop()
     task = asyncio.create_task(_live_analysis_loop())
     yield
     task.cancel()
@@ -49,18 +52,27 @@ async def _live_analysis_loop():
     loop = asyncio.get_running_loop()
     while True:
         await asyncio.sleep(3)
-        if stream.engine.dirty and stream.hub.queues:
-            try:
-                res = await loop.run_in_executor(None, stream.engine.live_analysis, _cur[0])
-                if res:
-                    stream.hub.publish("analysis", res)
-            except Exception as e:  # never let a bad window kill the loop
-                print("live analysis skipped:", e)
+        stream.evict_idle()
+        for ws in stream.workspaces():
+            if ws.engine.dirty and ws.hub.queues:
+                try:
+                    res = await loop.run_in_executor(None, ws.engine.live_analysis, ws.currency)
+                    if res:
+                        ws.hub.publish("analysis", res)
+                except Exception as e:  # never let a bad window kill the loop
+                    print("live analysis skipped:", e)
 
 
-_cur = [""]  # currency label used in live narratives (set by the dashboard)
+def _forget_user(uid: int):
+    sessions.drop_owner(uid)
+    stream.drop(uid)
 
-app = FastAPI(title="MoMo Fraud & Intrusion Detection API", lifespan=lifespan)
+
+auth.ON_DELETE.append(_forget_user)
+
+app = FastAPI(title="MoMo Fraud & Intrusion Detection API", lifespan=lifespan, dependencies=[Depends(auth.guard)])
+app.include_router(auth.router)
+User = Depends(auth.current_user)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=os.environ.get("MOMO_CORS_ORIGINS", "*").split(","),  # restrict this in deployment
@@ -92,7 +104,7 @@ def health():
         scoring.bundle(); model = True
     except scoring.ModelMissing:
         model = False
-    return {"status": "ok", "model_loaded": model, "subscribers": len(stream.hub.queues)}
+    return {"status": "ok", "model_loaded": model}
 
 
 @app.get("/api/summary")
@@ -186,12 +198,12 @@ def get_overview():
 @app.get("/api/capabilities")
 def capabilities():
     return {"formats": sources.SUPPORTED, "max_upload_mb": sources.MAX_UPLOAD_MB, "max_rows": sources.MAX_ROWS,
-            "databases": ["sqlite", "postgresql", "mysql"], "ingest_key_required": bool(INGEST_KEY),
+            "databases": ["sqlite", "postgresql", "mysql"] if sources.ALLOW_SERVER_FILES else ["postgresql", "mysql"],
             "model_features": scoring.feature_columns() if os.path.exists(scoring.MODEL_PATH) else []}
 
 
 # ------------------------------------------------------------------ batch analysis
-def _analyse(df_raw: pd.DataFrame, source: dict, notes: list, threshold: float, cur: str, events=None):
+def _analyse(user: dict, df_raw: pd.DataFrame, source: dict, notes: list, threshold: float, cur: str, events=None):
     t0 = time.time()
     try:
         X, frame, meta = features.prepare(df_raw, events)
@@ -205,7 +217,7 @@ def _analyse(df_raw: pd.DataFrame, source: dict, notes: list, threshold: float, 
     meta["notes"] = notes + meta["notes"]
     y = frame["label"].to_numpy() if meta["label_name"] else None
     curves = insights.build_curves(risk, frame["amount"].to_numpy(dtype=float), y)
-    s = sessions.put(frame, meta, curves, source)
+    s = sessions.put(user["id"], frame, meta, curves, source)
     return _respond(s, threshold, cur, took=time.time() - t0)
 
 
@@ -231,7 +243,7 @@ def _thr(t: float):
 
 @app.post("/api/analyze/upload")
 def analyze_upload(file: UploadFile = File(...), events: Optional[UploadFile] = File(None),
-                   threshold: float = Form(0.5), currency: str = Form("")):
+                   threshold: float = Form(0.5), currency: str = Form(""), user: dict = User):
     try:
         df, notes = sources.load_file(file.file, file.filename)
         ev = None
@@ -239,7 +251,7 @@ def analyze_upload(file: UploadFile = File(...), events: Optional[UploadFile] = 
             ev, n2 = sources.load_file(events.file, events.filename); notes += n2
     except sources.SourceError as e:
         raise HTTPException(422, str(e))
-    return _analyse(df, {"kind": "file", "name": file.filename, "detail": f"{len(df):,} rows"}, notes, _thr(threshold),
+    return _analyse(user, df, {"kind": "file", "name": file.filename, "detail": f"{len(df):,} rows"}, notes, _thr(threshold),
                     currency, ev)
 
 
@@ -258,13 +270,13 @@ class DbRequest(BaseModel):
 
 
 @app.post("/api/analyze/database")
-def analyze_database(req: DbRequest):
+def analyze_database(req: DbRequest, user: dict = User):
     try:
         df, notes = sources.load_database(req.model_dump())
     except sources.SourceError as e:
         raise HTTPException(422, str(e))
     label = req.table or "custom query"
-    return _analyse(df, {"kind": "database", "name": f"{req.dialect}: {label}", "detail": f"{len(df):,} rows"}, notes,
+    return _analyse(user, df, {"kind": "database", "name": f"{req.dialect}: {label}", "detail": f"{len(df):,} rows"}, notes,
                     _thr(req.threshold), req.currency)
 
 
@@ -279,13 +291,13 @@ class ApiRequest(BaseModel):
 
 
 @app.post("/api/analyze/api")
-def analyze_api(req: ApiRequest):
+def analyze_api(req: ApiRequest, user: dict = User):
     try:
         df, notes = sources.load_api(req.model_dump())
     except sources.SourceError as e:
         raise HTTPException(422, str(e))
     host = req.url.split("//")[-1].split("/")[0]
-    return _analyse(df, {"kind": "api", "name": host, "detail": f"{len(df):,} records"}, notes, _thr(req.threshold),
+    return _analyse(user, df, {"kind": "api", "name": host, "detail": f"{len(df):,} records"}, notes, _thr(req.threshold),
                     req.currency)
 
 
@@ -295,25 +307,25 @@ class SampleRequest(BaseModel):
 
 
 @app.post("/api/analyze/sample")
-def analyze_sample(req: SampleRequest):
+def analyze_sample(req: SampleRequest, user: dict = User):
     path = os.path.join(DATA_DIR, "scoring_sample.csv")
     if not os.path.exists(path):
         raise HTTPException(404, "scoring_sample.csv not found. Run backend/precompute_dashboard_data.py first.")
     df = pd.read_csv(path)
-    return _analyse(df, {"kind": "sample", "name": "Project sample (5,000 transactions)", "detail": "built-in, labelled"},
+    return _analyse(user, df, {"kind": "sample", "name": "Project sample (5,000 transactions)", "detail": "built-in, labelled"},
                     [], _thr(req.threshold), req.currency)
 
 
-def _session(sid: str) -> sessions.Session:
-    s = sessions.get(sid)
+def _session(sid: str, user: dict) -> sessions.Session:
+    s = sessions.get(sid, user["id"])
     if not s:
         raise HTTPException(404, "This analysis has expired from memory. Run the analysis again.")
     return s
 
 
 @app.get("/api/analysis/{sid}")
-def get_analysis(sid: str, threshold: float = 0.5, currency: str = ""):
-    return _respond(_session(sid), _thr(threshold), currency)
+def get_analysis(sid: str, threshold: float = 0.5, currency: str = "", user: dict = User):
+    return _respond(_session(sid, user), _thr(threshold), currency)
 
 
 def _filtered(s, threshold, type_, q, min_risk, only_flagged=True):
@@ -333,8 +345,9 @@ def _filtered(s, threshold, type_, q, min_risk, only_flagged=True):
 
 @app.get("/api/analysis/{sid}/flagged")
 def flagged_rows(sid: str, threshold: float = 0.5, type: str = "", q: str = "", min_risk: float = 0.0,
-                 sort: str = "risk", desc: bool = True, page: int = 0, page_size: int = Query(25, le=200)):
-    s = _session(sid)
+                 sort: str = "risk", desc: bool = True, page: int = 0, page_size: int = Query(25, le=200),
+                 user: dict = User):
+    s = _session(sid, user)
     sub = _filtered(s, threshold, type, q, min_risk)
     sort = sort if sort in sub.columns else "risk"
     sub = sub.sort_values(sort, ascending=not desc)
@@ -346,8 +359,8 @@ def flagged_rows(sid: str, threshold: float = 0.5, type: str = "", q: str = "", 
 
 
 @app.get("/api/analysis/{sid}/case/{row_id}")
-def case_detail(sid: str, row_id: int, threshold: float = 0.5):
-    s = _session(sid)
+def case_detail(sid: str, row_id: int, threshold: float = 0.5, user: dict = User):
+    s = _session(sid, user)
     f = s.frame
     hit = f[f["row_id"] == row_id]
     if hit.empty:
@@ -376,8 +389,8 @@ def case_detail(sid: str, row_id: int, threshold: float = 0.5):
 
 
 @app.get("/api/analysis/{sid}/export.csv")
-def export_csv(sid: str, threshold: float = 0.5, type: str = "", q: str = ""):
-    s = _session(sid)
+def export_csv(sid: str, threshold: float = 0.5, type: str = "", q: str = "", user: dict = User):
+    s = _session(sid, user)
     sub = _filtered(s, threshold, type, q, 0.0).sort_values("risk", ascending=False)
     cols = [c for c in ["row_id", "step", "type", "amount", "nameOrig", "nameDest", "risk", "label"] if c in sub]
     buf = io.StringIO(); sub[cols].to_csv(buf, index=False)
@@ -387,11 +400,11 @@ def export_csv(sid: str, threshold: float = 0.5, type: str = "", q: str = ""):
 
 # ------------------------------------------------------------------ real-time
 @app.post("/api/ingest")
-async def ingest(request: Request, x_api_key: str = Header(default="")):
-    """A MoMo platform / webhook pushes one transaction (object) or many (list). Each is scored immediately
-    and broadcast to every open dashboard. Fields may use any of the accepted column names."""
-    if INGEST_KEY and x_api_key != INGEST_KEY:
-        raise HTTPException(401, "Missing or wrong X-API-Key header.")
+async def ingest(request: Request, user: dict = User):
+    """A MoMo platform / webhook pushes one transaction (object) or many (list), authenticated with the user's
+    personal X-API-Key. Each is scored immediately and pushed to that user's open dashboards. Fields may use any
+    of the accepted column names."""
+    ws = stream.workspace(user["id"])
     try:
         body = await request.json()
     except Exception:
@@ -400,24 +413,25 @@ async def ingest(request: Request, x_api_key: str = Header(default="")):
     if not txns or not all(isinstance(t, dict) for t in txns) or len(txns) > 5000:
         raise HTTPException(400, "Send one transaction object or a list (max 5,000).")
     try:
-        res = await asyncio.get_running_loop().run_in_executor(None, stream.engine.process, txns, "ingest")
+        res = await asyncio.get_running_loop().run_in_executor(None, ws.engine.process, txns, "ingest")
     except ValueError as e:
         raise HTTPException(422, str(e))
     except scoring.ModelMissing as e:
         raise HTTPException(404, str(e))
     for ev in res:
-        stream.hub.publish("txn", ev)
+        ws.hub.publish("txn", ev)
     return {"scored": len(res), "flagged": sum(e["flagged"] for e in res),
             "results": [{"id": e["id"], "risk": e["risk"], "flagged": e["flagged"], "why": e.get("why", [])} for e in res]}
 
 
 @app.get("/api/stream")
-async def sse(request: Request):
-    q = stream.hub.subscribe()
+async def sse(request: Request, user: dict = User):
+    ws = stream.workspace(user["id"])
+    q = ws.hub.subscribe()
 
     async def gen():
         try:
-            snap = stream.engine.snapshot(); snap["replay"] = stream.replay.status()
+            snap = ws.engine.snapshot(); snap["replay"] = ws.replay.status()
             yield f"event: snapshot\ndata: {json.dumps(snap, default=str)}\n\n"
             while True:
                 if await request.is_disconnected():
@@ -428,7 +442,7 @@ async def sse(request: Request):
                 except asyncio.TimeoutError:
                     yield ": keep-alive\n\n"
         finally:
-            stream.hub.unsubscribe(q)
+            ws.hub.unsubscribe(q)
 
     return StreamingResponse(gen(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
@@ -441,25 +455,26 @@ class ReplayRequest(BaseModel):
 
 
 @app.post("/api/stream/replay")
-async def replay_ctl(req: ReplayRequest):
+async def replay_ctl(req: ReplayRequest, user: dict = User):
+    ws = stream.workspace(user["id"])
     rate = float(min(max(req.rate, 0.5), 200))
     if req.action == "stop":
-        await stream.replay.stop()
+        await ws.replay.stop()
     elif req.action == "rate":
-        stream.replay.set_rate(rate)
+        ws.replay.set_rate(rate)
     else:
         if req.source == "sample":
             df = pd.read_csv(os.path.join(DATA_DIR, "scoring_sample.csv"))
             name = "Project sample"
         else:
-            s = _session(req.source)
+            s = _session(req.source, user)
             df = s.frame.drop(columns=["risk", "row_id"], errors="ignore")
             name = s.source.get("name", "analysis")
         df = df.sample(frac=1, random_state=int(time.time()) % 10000).reset_index(drop=True)
         rows = [{k: v for k, v in r.items() if v == v} for r in df.to_dict("records")]
-        stream.engine.reset()
-        await stream.replay.start(rows, rate, name)
-    return stream.replay.status()
+        ws.engine.reset()
+        await ws.replay.start(rows, rate, name)
+    return ws.replay.status()
 
 
 class ConfigRequest(BaseModel):
@@ -468,25 +483,27 @@ class ConfigRequest(BaseModel):
 
 
 @app.post("/api/stream/config")
-def stream_config(req: ConfigRequest):
+def stream_config(req: ConfigRequest, user: dict = User):
+    ws = stream.workspace(user["id"])
     if req.threshold is not None:
-        stream.engine.threshold = _thr(req.threshold)
-        stream.engine.dirty = True
+        ws.engine.threshold = _thr(req.threshold)
+        ws.engine.dirty = True
     if req.currency is not None:
-        _cur[0] = req.currency
-    return {"threshold": stream.engine.threshold}
+        ws.currency = req.currency
+    return {"threshold": ws.engine.threshold}
 
 
 @app.post("/api/stream/reset")
-async def stream_reset():
-    await stream.replay.stop()
-    stream.engine.reset()
+async def stream_reset(user: dict = User):
+    ws = stream.workspace(user["id"])
+    await ws.replay.stop()
+    ws.engine.reset()
     return {"ok": True}
 
 
 @app.get("/api/stream/analysis")
-def stream_analysis(currency: str = ""):
-    return _json(stream.engine.live_analysis(currency) or {"empty": True})
+def stream_analysis(currency: str = "", user: dict = User):
+    return _json(stream.workspace(user["id"]).engine.live_analysis(currency) or {"empty": True})
 
 
 # ------------------------------------------------------------------ serve the built dashboard

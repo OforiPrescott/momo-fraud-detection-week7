@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { get } from "../api";
+import { useAuth } from "../auth";
 import { Briefing, Busy, Card, Findings, Kpi, Kpis, Recommendations } from "../components/ui";
 import { PALETTE, int, pct, typeName } from "../format";
 
 const ax = { fontSize: 12, fill: "#5b6878" };
 
 export default function Overview({ go }) {
+  const { user } = useAuth();
   const [o, setO] = useState(null);
   const [err, setErr] = useState("");
   useEffect(() => { get("/api/overview").then(setO).catch((e) => setErr(e.message)); }, []);
@@ -18,7 +20,7 @@ export default function Overview({ go }) {
   return (
     <>
       <header className="pagehead">
-        <div><h1>Mobile money fraud and intrusion detection</h1><p>A machine learning system for detecting fraud and intrusion attempts in mobile money platforms, built on transaction data with device and SIM access patterns.</p></div>
+        <div><span className="eyebrow">Welcome back, {user.name.split(" ")[0]}</span><h1>Mobile money fraud and intrusion detection</h1><p>A machine learning system for detecting fraud and intrusion attempts in mobile money platforms, built on transaction data with device and SIM access patterns.</p></div>
         <div className="row"><button className="btn primary" onClick={() => go("analyze")}>Analyse your data</button><button className="btn" onClick={() => go("live")}>Open the live monitor</button></div>
       </header>
       <div className="stack">

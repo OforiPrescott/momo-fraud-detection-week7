@@ -1,16 +1,33 @@
 """End-to-end smoke test of the Week 8 API. Run from the project root:  python tests/smoke_test.py
 
-Exercises: overview, sample analysis, threshold re-analysis, case drill-down, CSV export, uploads in five
+Exercises: sign-up / sign-in / sign-out and per-user isolation, overview, sample analysis, threshold re-analysis, case drill-down, CSV export, uploads in five
 formats, a database source (and a rejected SQL-injection attempt), real-time ingest and a live replay.
 """
 import os, sys, io, json, sqlite3, time, warnings
 warnings.filterwarnings("ignore")
 sys.path.insert(0, os.getcwd())
+os.environ['MOMO_DB_PATH'] = os.path.join(os.getcwd(), 'tests', '_tmp_auth.db')   # throwaway user database
+if os.path.exists(os.environ['MOMO_DB_PATH']): os.remove(os.environ['MOMO_DB_PATH'])
 import pandas as pd
 from fastapi.testclient import TestClient
 from backend.main import app
 with TestClient(app) as c:
     print(c.get('/api/health').json())
+    # --- accounts
+    assert c.get('/api/overview').status_code == 401, 'API must require sign-in'
+    assert c.post('/api/auth/register',json={'name':'A','email':'bad','password':'abc12345'}).status_code == 422
+    assert c.post('/api/auth/register',json={'name':'A','email':'a@x.org','password':'short'}).status_code == 422
+    r=c.post('/api/auth/register',json={'name':'Ama Mensah','email':'ama@example.org','password':'s3cret-pass','organization':'Test Bank'}); print('register',r.status_code,r.json()['name'])
+    assert r.status_code == 200 and c.get('/api/auth/me').json()['email'] == 'ama@example.org'
+    assert c.post('/api/auth/register',json={'name':'X','email':'AMA@example.org','password':'s3cret-pass'}).status_code == 409
+    c.post('/api/auth/logout'); assert c.get('/api/auth/me').status_code == 401, 'logout must end the session'
+    assert c.post('/api/auth/login',json={'email':'ama@example.org','password':'wrong-pass1'}).status_code == 401
+    r=c.post('/api/auth/login',json={'email':'Ama@Example.org','password':'s3cret-pass'}); print('login',r.status_code)
+    assert c.post('/api/auth/profile',json={'name':'Ama M.','organization':'Test Bank'}).json()['name'] == 'Ama M.'
+    key=c.post('/api/auth/api-key').json()['api_key']
+    with TestClient(app) as anon:  # second browser, no cookie
+        assert anon.get('/api/overview',headers={'X-API-Key':key}).status_code == 200, 'API key must authenticate'
+        assert anon.get('/api/overview',headers={'X-API-Key':key+'x'}).status_code == 401
     o=c.get('/api/overview'); print('overview',o.status_code, len(o.json()['insights']))
     r=c.post('/api/analyze/sample',json={'threshold':0.5,'currency':'GH₵'}); d=r.json(); print('sample',r.status_code, d['took_seconds'])
     print(d['narrative']); print([ (i['severity'],i['title']) for i in d['insights']]); print([ (x['priority'],x['title']) for x in d['recommendations']])
@@ -48,3 +65,14 @@ with TestClient(app) as c:
     c.post('/api/stream/replay',json={'action':'start','rate':80}); time.sleep(4.5)
     la=c.get('/api/stream/analysis').json(); print('live',la.get('live'), la['narrative']['headline'] if 'narrative' in la else la)
     print(c.post('/api/stream/replay',json={'action':'stop'}).json())
+    # the account database can never be read through the SQLite connector
+    r=c.post('/api/analyze/database',json={'dialect':'sqlite','database':os.environ['MOMO_DB_PATH'],'table':'users'}); print('auth db blocked',r.status_code); assert r.status_code == 422
+    # --- a second user sees none of the first user's data
+    with TestClient(app) as b:
+        b.post('/api/auth/register',json={'name':'Kofi','email':'kofi@example.org','password':'an0ther-pass'})
+        assert b.get(f'/api/analysis/{sid}').status_code == 404, 'analyses must be private'
+        assert b.get('/api/stream/analysis').json().get('empty'), 'live monitor must be private'
+        assert b.post('/api/auth/delete',json={'password':'an0ther-pass'}).status_code == 200
+        assert b.get('/api/auth/me').status_code == 401
+    assert c.post('/api/auth/password',json={'current_password':'s3cret-pass','new_password':'n3w-pass-word'}).status_code == 200
+    print('ALL CHECKS PASSED')

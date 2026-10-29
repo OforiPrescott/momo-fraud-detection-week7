@@ -185,3 +185,90 @@ td.r, th.r { text-align: right; }
 .drop svg { width: 34px; height: 34px; color: var(--blue); }
 @media (max-width: 900px) { .shell { flex-direction: column; } .rail { position: relative; height: auto; width: 100%; padding: 10px; flex-direction: row; align-items: center; gap: 8px; } .main { padding: 10px; } }
 @media (max-width: 600px) { .rail .nav button span:last-child, .rail .nav button span.live-dot { display: none; } .g-main, .g2 { grid-template-columns: 1fr !important; } .pagehead { padding-right: 0; } }
+
+/* ---------- polish ---------- */
+.card { box-shadow: 0 1px 2px rgba(12,35,64,.04), 0 1px 1px rgba(12,35,64,.02); }
+.kpis, .briefing { box-shadow: 0 1px 2px rgba(12,35,64,.04); }
+.btn { transition: background .15s, border-color .15s, box-shadow .15s, transform .05s; }
+.btn:active:not(:disabled) { transform: translateY(1px); }
+.btn.lg { padding: 11px 18px; font-size: 15px; } .btn.block { width: 100%; }
+.btn.danger-outline { border-color: #efc1ca; color: var(--crit); background: #fff; } .btn.danger-outline:hover { background: var(--crit-bg); }
+.link { background: none; border: 0; padding: 0; color: var(--blue); font-weight: 600; text-decoration: underline; text-underline-offset: 2px; }
+.link:hover { color: #00466f; }
+.eyebrow { display: block; font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--blue); margin-bottom: 6px; }
+.nav button { transition: background .15s, color .15s; }
+.danger-zone { border-color: #efc1ca; }
+.seg.full { display: flex; width: 100%; } .seg.full button { flex: 1; padding: 8px 12px; }
+.check { display: flex; align-items: center; gap: 8px; font-size: 13.5px; color: var(--ink); cursor: pointer; }
+.check input { width: 16px; height: 16px; accent-color: var(--blue); }
+input:focus, select:focus, textarea:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 3px rgba(0,101,164,.15); }
+input[type=email] { border: 1px solid #c5cdd8; border-radius: 6px; padding: 7px 10px; background: #fff; width: 100%; }
+input:disabled { background: #f3f6f9; color: var(--muted); }
+
+/* ---------- avatar + user card ---------- */
+.avatar { display: inline-grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; background: linear-gradient(135deg, var(--blue), #2f7fb8); color: #fff; font-weight: 700; font-size: 13px; flex: none; letter-spacing: .02em; }
+.usercard { display: flex; align-items: center; gap: 4px; border-top: 1px solid var(--navy-3); padding-top: 12px; }
+.usercard .who { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; background: none; border: 0; padding: 6px; border-radius: 6px; text-align: left; color: #fff; }
+.usercard .who:hover { background: var(--navy-2); }
+.usercard .who span { min-width: 0; display: grid; }
+.usercard .who b { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.usercard .who small { font-size: 11.5px; color: #9fb2c9; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.usercard .out { background: none; border: 0; color: #9fb2c9; padding: 8px; border-radius: 6px; display: grid; place-items: center; }
+.usercard .out:hover { background: var(--navy-2); color: #fff; }
+.usercard svg { width: 18px; height: 18px; }
+.nav .nav-account { display: none; }
+@media (max-width: 900px) { .nav .nav-account { display: flex; } }
+
+/* ---------- toasts ---------- */
+.toasts { position: fixed; right: 20px; bottom: 20px; display: grid; gap: 8px; z-index: 60; max-width: min(360px, calc(100vw - 32px)); }
+.toast { background: var(--navy); color: #fff; padding: 11px 16px; border-radius: 8px; font-weight: 550; font-size: 13.5px; box-shadow: 0 8px 24px rgba(12,35,64,.25); border-left: 4px solid var(--low); animation: toastin .2s ease-out; }
+.toast.bad { border-left-color: var(--crit); }
+@keyframes toastin { from { transform: translateY(8px); opacity: 0; } to { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .toast { animation: none; } }
+
+/* ---------- splash ---------- */
+.splash { min-height: 100%; display: grid; place-content: center; gap: 22px; background: var(--navy); }
+.splash img { width: 200px; } .splash .progress { width: 200px; background: var(--navy-3); }
+
+/* ---------- sign-in / registration ---------- */
+.auth { min-height: 100%; display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); background: var(--paper); }
+.auth .hero { position: relative; overflow: hidden; color: #cdd8e6; padding: 40px clamp(28px, 5vw, 64px); display: flex; flex-direction: column; gap: 40px;
+  background: radial-gradient(1200px 500px at 110% -10%, rgba(0,101,164,.55), transparent 60%), radial-gradient(700px 400px at -20% 110%, rgba(47,158,143,.25), transparent 60%), var(--navy); }
+.auth .hero .logo { width: 190px; }
+.auth .pitch { margin: auto 0; display: grid; gap: 18px; max-width: 560px; }
+.auth .pitch .eyebrow { color: #7fc0ea; }
+.auth .pitch h1 { font-family: var(--serif); color: #fff; font-size: clamp(28px, 3.4vw, 42px); line-height: 1.12; font-weight: 600; letter-spacing: -.015em; }
+.auth .pitch > p { font-size: 16px; line-height: 1.65; color: #b8c7d9; }
+.features { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 16px; }
+.features li { display: flex; gap: 14px; align-items: flex-start; }
+.features .fi { width: 38px; height: 38px; border-radius: 9px; background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.12); display: grid; place-items: center; flex: none; color: #7fc0ea; }
+.features .fi svg { width: 19px; height: 19px; }
+.features b { display: block; color: #fff; font-weight: 650; } .features span { font-size: 13.5px; color: #a9bad0; line-height: 1.55; }
+.stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 0; border-top: 1px solid rgba(255,255,255,.12); padding-top: 22px; }
+.stats dt { font-family: var(--serif); font-size: 26px; color: #fff; font-weight: 600; } .stats dd { margin: 0; font-size: 12.5px; color: #9fb2c9; }
+.auth .panel { display: grid; place-items: center; padding: 40px 20px; }
+.authcard { width: min(420px, 100%); display: grid; gap: 16px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 30px 28px; box-shadow: 0 10px 40px rgba(12,35,64,.08); }
+.authhead h2 { font-family: var(--serif); font-size: 26px; font-weight: 600; letter-spacing: -.01em; }
+.authhead p { margin-top: 4px; }
+.authcard label.f { font-size: 13px; color: var(--ink); font-weight: 600; }
+.authcard input[type=text], .authcard input[type=email], .authcard input[type=password] { padding: 10px 12px; }
+.switch { text-align: center; color: var(--muted); font-size: 13.5px; }
+.fine { display: flex; gap: 8px; align-items: flex-start; font-size: 12px; color: var(--faint); border-top: 1px solid var(--line); padding-top: 14px; }
+.fine svg { width: 15px; height: 15px; flex: none; margin-top: 1px; }
+.pw { position: relative; } .pw input { padding-right: 42px !important; }
+.pw input::-ms-reveal, .pw input::-ms-clear { display: none; } /* Edge adds its own eye button */
+.pw button { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); background: none; border: 0; color: var(--muted); padding: 6px; border-radius: 5px; display: grid; place-items: center; }
+.pw button:hover { color: var(--ink); background: #eef1f5; } .pw svg { width: 18px; height: 18px; }
+.meter { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--muted); margin-top: -6px; }
+.meter .bars { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; width: 120px; flex: none; }
+.meter i { height: 4px; border-radius: 2px; background: #e2e7ee; }
+.meter[data-s="1"] i.on { background: var(--crit); } .meter[data-s="2"] i.on { background: var(--med); }
+.meter[data-s="3"] i.on, .meter[data-s="4"] i.on { background: var(--low); }
+.keybox { display: flex; align-items: center; gap: 10px; background: #0f1b2b; border-radius: 6px; padding: 10px 12px; }
+.keybox code { color: #d9e6f5; font-size: 13px; flex: 1; overflow-wrap: anywhere; }
+@media (max-width: 900px) {
+  .auth { grid-template-columns: 1fr; }
+  .auth .hero { padding: 28px 20px; gap: 22px; } .auth .hero .logo { width: 150px; }
+  .features, .stats { display: none; } .auth .pitch h1 { font-size: 26px; } .auth .pitch > p { font-size: 14.5px; }
+  .auth .panel { padding: 20px 16px 40px; } .authcard { padding: 22px 18px; }
+}

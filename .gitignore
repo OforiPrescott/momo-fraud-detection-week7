@@ -24,3 +24,7 @@ Thumbs.db
 
 # Test artifacts
 tests/_tmp_test.db
+tests/_tmp_auth.db*
+
+# User accounts database (created on first run)
+var/

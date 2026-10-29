@@ -1,9 +1,9 @@
 .git
 .kilo
 venv
+var
 data
 **/__pycache__
 **/*.pyc
 frontend/node_modules
-frontend/dist
-tests/_tmp_test.db
+tests/_tmp_*

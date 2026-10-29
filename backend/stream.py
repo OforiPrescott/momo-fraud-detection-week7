@@ -8,6 +8,9 @@ current transaction, except devices/fan-in which count everything seen so
 far). Every scored transaction is pushed to all connected dashboards through
 Server-Sent Events (``Hub``).
 
+Every signed-in user has their own ``Workspace`` (engine + hub + replay), so
+one user's live feed, replay and threshold are never visible to another.
+
 Two ways transactions arrive:
   1. POST /api/ingest   a real MoMo platform / webhook pushes transactions
   2. Replay             the dashboard replays a dataset at N transactions per
@@ -34,13 +37,13 @@ from .schema import KNOWN_TYPES, canonicalise_columns, normalise_types
 MOVES = ("CASH_OUT", "TRANSFER")
 MAX_ACCOUNTS = 500_000
 WINDOW = 800
+LOOP = None  # the server's event loop, set at startup; publishing from worker threads goes through it
 
 
 class Hub:
     """Fan-out of events to every open dashboard connection."""
 
     def __init__(self):
-        self.loop = None
         self.queues: set = set()
 
     def subscribe(self):
@@ -61,8 +64,12 @@ class Hub:
                 except asyncio.QueueFull:
                     pass  # a stalled client must never block scoring
 
-        if self.loop is not None:
-            self.loop.call_soon_threadsafe(_put)
+        try:
+            asyncio.get_running_loop()
+            _put()  # already on the event loop (async endpoint or replay task)
+        except RuntimeError:
+            if LOOP is not None and not LOOP.is_closed():
+                LOOP.call_soon_threadsafe(_put)
 
 
 def _json_default(o):
@@ -257,12 +264,9 @@ class Engine:
                     "flagged_total": self.total_flagged}
 
 
-engine = Engine()
-hub = Hub()
-
-
 class Replay:
-    def __init__(self):
+    def __init__(self, engine: "Engine", hub: Hub):
+        self.engine, self.hub = engine, hub
         self.task = None
         self.state = {"running": False, "rate": 0, "source": None, "sent": 0, "total": 0}
 
@@ -272,7 +276,7 @@ class Replay:
     async def start(self, rows: list, rate: float, source: str, loop_forever: bool = True):
         await self.stop()
         self.state = {"running": True, "rate": rate, "source": source, "sent": 0, "total": len(rows)}
-        hub.publish("replay", self.state)
+        self.hub.publish("replay", self.state)
         self.task = asyncio.create_task(self._run(rows, rate, loop_forever))
 
     async def stop(self):
@@ -283,7 +287,7 @@ class Replay:
             except asyncio.CancelledError:
                 pass
         self.state["running"] = False
-        hub.publish("replay", self.state)
+        self.hub.publish("replay", self.state)
 
     def set_rate(self, rate: float):
         self.state["rate"] = rate
@@ -305,15 +309,59 @@ class Replay:
                 if not loop_forever and i + k >= len(rows):
                     batch = rows[i:]
                 i += k
-                res = await loop.run_in_executor(None, engine.process, batch, "replay")
+                res = await loop.run_in_executor(None, self.engine.process, batch, "replay")
                 for ev in res:
-                    hub.publish("txn", ev)
+                    self.hub.publish("txn", ev)
                 self.state["sent"] += len(res)
                 if not loop_forever and i >= len(rows):
                     break
         finally:
             self.state["running"] = False
-            hub.publish("replay", self.state)
+            self.hub.publish("replay", self.state)
 
 
-replay = Replay()
+class Workspace:
+    """One user's real-time state."""
+
+    def __init__(self):
+        self.engine = Engine()
+        self.hub = Hub()
+        self.replay = Replay(self.engine, self.hub)
+        self.currency = ""
+        self.touched = time.time()
+
+    def idle(self):
+        return not self.hub.queues and not self.replay.state["running"]
+
+
+_workspaces: "dict[int, Workspace]" = {}
+_ws_lock = threading.Lock()
+
+
+def workspace(user_id: int) -> Workspace:
+    with _ws_lock:
+        ws = _workspaces.get(user_id)
+        if ws is None:
+            ws = _workspaces[user_id] = Workspace()
+        ws.touched = time.time()
+        return ws
+
+
+def workspaces() -> list:
+    with _ws_lock:
+        return list(_workspaces.values())
+
+
+def drop(user_id: int):
+    with _ws_lock:
+        ws = _workspaces.pop(user_id, None)
+    if ws and ws.replay.task and LOOP is not None:
+        LOOP.call_soon_threadsafe(ws.replay.task.cancel)
+
+
+def evict_idle(max_idle: float = 2 * 3600):
+    """Free the memory of users who have had no open dashboard and no replay for a while."""
+    now = time.time()
+    with _ws_lock:
+        for uid in [u for u, w in _workspaces.items() if w.idle() and now - w.touched > max_idle]:
+            del _workspaces[uid]

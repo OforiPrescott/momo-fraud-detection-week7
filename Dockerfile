@@ -1,37 +1,27 @@
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 WORKDIR /app
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    MOMO_DB_PATH=/app/var/momo.db
 
-# System deps for Node + Python wheels
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl ca-certificates gnupg \
-    build-essential libpq-dev \
+# XGBoost needs the OpenMP runtime
+RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Node.js
-RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
-    && apt-get install -y --no-install-recommends nodejs \
-    && rm -rf /var/lib/apt/lists/*
-
-# Python dependencies
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install -r requirements.txt
 
-# Backend code
+# API + trained model + precomputed data, results, and the ready-built dashboard (frontend/dist is committed;
+# rebuild it with `npm run build` in frontend/ before building the image if you changed the UI)
 COPY backend ./backend
-COPY src ./src
 COPY reports ./reports
+COPY frontend/dist ./frontend/dist
 
-# Frontend code + build
-COPY frontend ./frontend
-WORKDIR /app/frontend
-RUN npm install && npm run build
-
-WORKDIR /app
+# user accounts live here; docker-compose mounts it so they survive rebuilds
+VOLUME /app/var
 
 EXPOSE 8000
 

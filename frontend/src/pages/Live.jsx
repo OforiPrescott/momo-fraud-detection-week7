@@ -7,7 +7,7 @@ import { full, int, pct, riskColor, timeOf, typeName } from "../format";
 import { useLive } from "../live";
 import { useSettings } from "../settings";
 
-export default function Live({ analysisResult }) {
+export default function Live({ analysisResult, goAccount }) {
   const L = useLive();
   const { currency } = useSettings();
   const [rate, setRate] = useState(10);
@@ -16,7 +16,7 @@ export default function Live({ analysisResult }) {
   const [err, setErr] = useState("");
   const A = L.analysis;
   const base = API || window.location.origin;
-  const sample = `curl -X POST ${base}/api/ingest \\\n  -H "Content-Type: application/json" \\\n  -d '{"type":"CASH_OUT","amount":250000,"nameOrig":"C1001","nameDest":"C2002",\n       "device_id":"dev-77","sim_change":1,"oldbalanceOrg":250000,"newbalanceOrig":0}'`;
+  const sample = `curl -X POST ${base}/api/ingest \\\n  -H "Content-Type: application/json" \\\n  -H "X-API-Key: YOUR_API_KEY" \\\n  -d '{"type":"CASH_OUT","amount":250000,"nameOrig":"C1001","nameDest":"C2002",\n       "device_id":"dev-77","sim_change":1,"oldbalanceOrg":250000,"newbalanceOrig":0}'`;
   const guard = (p) => p.catch((e) => setErr(e.message));
 
   return (
@@ -53,7 +53,7 @@ export default function Live({ analysisResult }) {
           <details style={{ marginTop: 14 }}>
             <summary style={{ cursor: "pointer", fontWeight: 600 }}>Connect your own system</summary>
             <div className="stack" style={{ marginTop: 10 }}>
-              <p className="hint">Have the mobile money platform (or a webhook) send each transaction to the endpoint below. Field names such as amount, type, nameOrig, nameDest, device_id and sim_change are recognised, and a list of transactions can be sent in one request. If the server has MOMO_INGEST_KEY set, add an X-API-Key header.</p>
+              <p className="hint">Have the mobile money platform (or a webhook) send each transaction to the endpoint below. Field names such as amount, type, nameOrig, nameDest, device_id and sim_change are recognised, and a list of transactions can be sent in one request. Transactions sent with your personal API key appear only on your own monitor. <button className="link" onClick={goAccount}>Create an API key on your Account page.</button></p>
               <pre className="code">{sample}</pre>
             </div>
           </details>

@@ -18,6 +18,8 @@ import pandas as pd
 MAX_ROWS = int(os.environ.get("MOMO_MAX_ROWS", 1_000_000))
 MAX_UPLOAD_MB = int(os.environ.get("MOMO_MAX_UPLOAD_MB", 300))
 ALLOW_PRIVATE_HOSTS = os.environ.get("MOMO_ALLOW_PRIVATE_HOSTS", "1") == "1"
+# SQLite reads a file ON THE SERVER: fine on your own machine, but turn it off (0) on a shared deployment
+ALLOW_SERVER_FILES = os.environ.get("MOMO_ALLOW_SERVER_FILES", "1") == "1"
 SUPPORTED = [".csv", ".tsv", ".txt", ".xlsx", ".xlsm", ".xls", ".json", ".jsonl", ".ndjson", ".parquet",
              ".csv.gz", ".csv.zip", ".json.gz"]
 
@@ -130,7 +132,12 @@ def load_database(cfg: dict):
         raise SourceError("Enter a table name or a SELECT query.")
 
     if dialect == "sqlite":
+        from .auth import DB_PATH
+        if not ALLOW_SERVER_FILES:
+            raise SourceError("Reading SQLite files on the server is disabled here. Upload the data as a file instead.")
         path = (cfg.get("database") or "").strip()
+        if path and os.path.abspath(path) == DB_PATH or os.path.basename(path).lower().startswith("momo.db"):
+            raise SourceError("That file is the platform's own account database and cannot be analysed.")
         if not path or not os.path.exists(path):
             raise SourceError(f"SQLite file not found on the server: '{path}'.")
         url = f"sqlite:///file:{path}?mode=ro&uri=true"
