@@ -33,7 +33,7 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import auth, drift, features, insights, overview, scoring, sessions, sources, stream
+from . import admin, auth, drift, features, insights, overview, scoring, sessions, sources, stream
 from .security import SecurityHeaders, csv_safe
 from .schema import KNOWN_TYPES
 
@@ -78,6 +78,7 @@ _DOCS = os.environ.get("MOMO_API_DOCS", "1") == "1"  # set 0 to hide /docs on a 
 app = FastAPI(title="MoMo Fraud & Intrusion Detection API", lifespan=lifespan, dependencies=[Depends(auth.guard)],
               docs_url="/docs" if _DOCS else None, redoc_url=None, openapi_url="/openapi.json" if _DOCS else None)
 app.include_router(auth.router)
+app.include_router(admin.router)
 User = Depends(auth.current_user)
 # Same-origin by default: the dashboard is served by this server, so no other website needs to call the API.
 # List extra sites in MOMO_CORS_ORIGINS only if you host a separate frontend (cookies are never sent cross-site).

@@ -15,6 +15,9 @@ httpx>=0.27,<1
 pyarrow>=15
 openpyxl>=3.1,<4
 defusedxml>=0.7     # openpyxl uses it automatically: blocks XML "billion laughs" attacks in uploaded Excel files
+# encrypts two-step sign-in secrets at rest; 48.x is the last release with Intel Mac wheels
+cryptography>=44; platform_system != "Darwin" or platform_machine != "x86_64"
+cryptography>=44,<49; platform_system == "Darwin" and platform_machine == "x86_64"
 xlrd>=2.0,<3
 psycopg2-binary>=2.9,<3
 pymysql>=1.1,<2

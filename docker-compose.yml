@@ -10,6 +10,9 @@ services:
       - MOMO_ALLOW_SERVER_FILES=0       # visitors cannot read SQLite files on the server
       - MOMO_ALLOW_REGISTRATION=1       # set to 0 to stop new sign-ups
       - MOMO_API_DOCS=1                 # set to 0 to hide the interactive API docs at /docs
+      - MOMO_REQUIRE_2FA=0              # set to 1 so every account must use two-step sign-in
+      # - MOMO_ADMIN_EMAILS=you@example.org   # who gets the Administration page
+      # - MOMO_SECRET_KEY=long-random-string  # encrypts two-step secrets; keep it out of database backups
       # - MOMO_SECURE_COOKIES=1         # turn on once the site is served over HTTPS (also enables HSTS)
       # Email for "Forgot password?" (without these, reset links are printed in the container log):
       # - MOMO_PUBLIC_URL=https://momo.example.org

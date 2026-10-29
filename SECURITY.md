@@ -13,7 +13,7 @@ test in `tests/test_security.py` or `tests/test_account_recovery.py`, which run 
 | Password | A one-way hash only | PBKDF2-HMAC-SHA256, **600,000 iterations** (the OWASP recommendation for this algorithm), with a **unique random 16-byte salt per user**. Two users with the same password get completely different hashes. |
 | Session (staying signed in) | SHA-256 hash of a random token | A 256-bit random token is placed in your browser in a cookie marked **HttpOnly** (page scripts cannot read it) and **SameSite=Lax** (not sent on cross-site requests), and **Secure** when the site runs over HTTPS. The database holds only the token's hash, so a copy of the database cannot be used to impersonate anyone. |
 | API key | SHA-256 hash + last 4 characters | The full key is shown once, when created. It cannot be recovered afterwards, only replaced. |
-| Two-step sign-in secret | The authenticator secret | A 160-bit random secret shared with your authenticator app. It has to be kept in a usable form to check your codes, so it is never shown again, never returned by the API, and protected with the database file (see section 6). |
+| Two-step sign-in secret | **Encrypted** secret | A 160-bit random secret shared with your authenticator app. The server must read it back to check codes, so it cannot be hashed; instead it is encrypted with Fernet (AES-128 + HMAC-SHA256, from the audited `cryptography` library) under a key kept **outside the database** (`MOMO_SECRET_KEY`, or a separate `secret.key` file). A copy of the database alone reveals nothing. Never shown again and never returned by the API. |
 | Recovery codes | SHA-256 hashes | 8 single-use codes shown once when two-step sign-in is turned on. |
 | Password-reset link | SHA-256 hash of the token | A 256-bit random token, valid for 30 minutes and for one use only. |
 | Name, email, organisation | Plain text | Needed to show your profile. Control characters are stripped and lengths are limited. |
@@ -46,6 +46,11 @@ own database connector.
   from the request's Host header (which an attacker could forge), and the token travels after `#` so it never
   appears in server logs or Referer headers. Using it ends every session, invalidates other links, and does
   **not** skip two-step sign-in.
+- **Two-step sign-in can be required.** With `MOMO_REQUIRE_2FA=1`, an account without it can only set it up or
+  sign out: every other page and API call (API keys included) is refused until it is on.
+- **Disabled accounts.** An administrator can disable an account: its sessions end at once and it can no
+  longer sign in, use API keys or reset its password. A disabled account is only revealed after the correct
+  password, so the message cannot be used to discover accounts.
 - **Session control.** Sessions last 24 hours, or 30 days with "Keep me signed in". Changing your password
   signs out every other device. "Sign out of all devices" ends every session at once.
 - **Security activity log.** Sign-ins, failed attempts, password changes, API key changes and sign-outs are
@@ -54,7 +59,21 @@ own database connector.
 - **Sensitive actions need a browser session.** API keys can be created and accounts deleted only from a
   signed-in browser, never with an API key alone.
 
-## 3. Application protections
+## 3. Administration
+
+Administrators are the accounts whose email is listed in `MOMO_ADMIN_EMAILS`. There is deliberately no "first
+account becomes admin" rule, so someone who signs up early cannot take over a public server. The
+Administration page and its API additionally require a signed-in browser session (never an API key) with
+two-step sign-in turned on, so a stolen administrator password alone is not enough.
+
+An administrator sees every account (name, email, organisation, dates, two-step status, active sessions,
+failed attempts), platform security counts and recent security events, including failed sign-ins for
+emails that have no account. They never see passwords, codes, keys or secrets. For another account they can
+sign it out everywhere, reset its two-step sign-in (for someone who lost both phone and recovery codes, after
+confirming who they are), disable or re-enable it, or delete it. They cannot act on their own account this
+way. Every action is written to the security log of both the administrator and the affected account.
+
+## 4. Application protections
 
 | Threat | Protection |
 | --- | --- |
@@ -73,7 +92,7 @@ own database connector.
 | Reading files on the server | The SQLite connector can be switched off (`MOMO_ALLOW_SERVER_FILES=0`) and can never open the account database. |
 | Oversized form fields | Every request field has a maximum length. |
 
-## 4. Machine-learning protections
+## 5. Machine-learning protections
 
 - **Model integrity.** The model file is a Python pickle, and loading a pickle can run code. The server
   therefore loads `backend/model.joblib` only if its SHA-256 matches `backend/model.joblib.sha256` (or
@@ -86,7 +105,7 @@ own database connector.
 - **Explainability.** Every flagged transaction shows the model's own reasons (TreeSHAP), so a decision can
   be checked by a person before money is held.
 
-## 5. Running it safely for other people
+## 6. Running it safely for other people
 
 1. Serve it over **HTTPS** (for example behind Caddy or Nginx), then set `MOMO_SECURE_COOKIES=1`.
 2. Use `docker compose up --build -d`. The container runs as an unprivileged user, and `docker-compose.yml`
@@ -97,26 +116,31 @@ own database connector.
    `MOMO_SMTP_USER`, `MOMO_SMTP_PASSWORD`, `MOMO_SMTP_FROM`, and **`MOMO_PUBLIC_URL`** (the address users
    open, e.g. `https://momo.example.org`; reset emails are not sent without it). Without SMTP the platform runs
    in console mode: reset links are written to the server log for the operator to pass on.
-6. Encourage everyone, and especially anyone handling real customer data, to turn on two-step sign-in.
-7. Back up the accounts database regularly and keep the copy private. Without Docker: copy `var/momo.db`
+6. Set `MOMO_REQUIRE_2FA=1` so every account must use two-step sign-in, and list administrators in
+   `MOMO_ADMIN_EMAILS` (they must turn on two-step sign-in before the Administration page opens).
+7. Set `MOMO_SECRET_KEY` to a long random string (for example the output of
+   `python -c "import secrets; print(secrets.token_urlsafe(48))"`) and keep it out of database backups. Without
+   it, a key file `secret.key` is created next to the database: back it up **separately**. If the key is lost,
+   users sign in with a recovery code (or an administrator resets their two-step sign-in) and set it up again.
+8. Back up the accounts database regularly and keep the copy private. Without Docker: copy `var/momo.db`
    while the server is stopped. With Docker: `docker compose cp momo-fraud-detection:/app/var/momo.db ./momo-backup.db`.
-8. Run `pip-audit -r requirements.txt` and `npm audit` (in `frontend/`) from time to time to check
+9. Run `pip-audit -r requirements.txt` and `npm audit` (in `frontend/`) from time to time to check
    dependencies for known vulnerabilities (CI runs pip-audit on every push).
 
-## 6. Known limitations
+## 7. Known limitations
 
-- Two-step sign-in secrets must be readable by the server to check codes, so they are stored as issued, not
-  hashed. Anyone holding a copy of `var/momo.db` could generate codes for users who also lose their password.
-  Keep the database and its backups private (file permissions, encrypted disk or volume).
-- Two-step sign-in is optional per user; there is no setting yet that forces it for everyone.
+- Two-step secrets are encrypted, but anyone holding **both** the database and the key could read them. Keep
+  `MOMO_SECRET_KEY` (or `secret.key`) away from database backups.
 - In console mode (no SMTP), reset links appear in the server log; protect that log like a password.
+- Administrator rights are granted by configuration (`MOMO_ADMIN_EMAILS`), not from the dashboard, so changing
+  administrators means changing that setting and restarting.
 - Rate limits are kept in memory per server process; behind several server processes, also rate-limit at
   the reverse proxy.
 - The REST API connector re-checks the connected address before reading a response, but the request itself
   has already been sent by then. Keep `MOMO_ALLOW_PRIVATE_HOSTS=0` on shared servers.
 - Analyses are held in memory only, so they are lost on restart (this is also a privacy feature).
 
-## 7. Reporting a vulnerability
+## 8. Reporting a vulnerability
 
 Please do not open a public issue. Contact the repository owner privately with the steps to reproduce,
 and allow time for a fix before disclosure.

@@ -17,7 +17,7 @@ Last updated: 29 October 2026
 11. [Using the API with your API key](#11-using-the-api-with-your-api-key)
 12. [Reading the results](#12-reading-the-results)
 13. [Security and privacy](#13-security-and-privacy)
-14. [Running it for others](#14-running-it-for-others)
+14. [Running it for others](#14-running-it-for-others) (including administration)
 15. [Troubleshooting and FAQ](#15-troubleshooting-and-faq)
 16. [Glossary](#16-glossary)
 
@@ -387,6 +387,12 @@ The card then shows how many recovery codes are left. **New recovery codes** rep
 needs your password and a current code (or a recovery code). If your phone's clock is wrong, codes will not
 match: set the phone to set its time automatically.
 
+**If the platform requires two-step sign-in.** Some servers are set to require it for everyone. Then, right
+after you sign up or sign in, you see only a **Turn on two-step sign-in to continue** screen. Follow the same
+steps; once you have saved your recovery codes, the full dashboard opens. You can also sign out from there.
+
+![Two-step sign-in required](images/require-2fa.png)
+
 **Check your activity now and then.** If you see a sign-in or change you did not make, change your password
 straight away and use **Sign out of all devices**.
 
@@ -471,8 +477,9 @@ data has a confirmed-fraud column.
   hash of it.
 - **Your API key** is stored only as a hash and shown to you once.
 - **Your recovery codes and password-reset links** are stored only as hashes, and each works once.
-- **Your two-step secret** is kept by the server so it can check your codes; it is never shown again or
-  sent back by any page.
+- **Your two-step secret** must be readable by the server to check your codes, so it is **encrypted** with a
+  key kept separately from the database: a copy of the database alone reveals nothing. It is never shown
+  again or sent back by any page.
 - **Your uploaded data is never written to disk.** It is analysed in memory and disappears on restart.
 
 **What protects your account**: optional two-step sign-in, single-use 30-minute reset links that never skip
@@ -510,12 +517,42 @@ This section is for whoever hosts the platform for other people.
 | `MOMO_CORS_ORIGINS` | none | none | Other websites allowed to call the API |
 | `MOMO_TRUSTED_ORIGINS` | none | as needed | Other origins allowed to send signed-in requests |
 | `MOMO_DB_PATH` | `var/momo.db` | as needed | Where accounts are stored |
+| `MOMO_REQUIRE_2FA` | 0 | 1 | Every account must turn on two-step sign-in before using the platform |
+| `MOMO_ADMIN_EMAILS` | none | your administrators | Who gets the Administration page (comma-separated emails) |
+| `MOMO_SECRET_KEY` | none | a long random string | Encrypts two-step secrets; keep it out of database backups |
 | `MOMO_PUBLIC_URL` | none | your site's address | Used to build password-reset links; required with email |
 | `MOMO_SMTP_HOST`, `_PORT`, `_USER`, `_PASSWORD`, `_FROM` | none, 587 | your email provider | Sends password-reset emails; without them, links go to the server log |
 | `MOMO_MAX_UPLOAD_MB` / `MOMO_MAX_ROWS` | 300 / 1,000,000 | as needed | Upload limits |
 | `MOMO_MAX_SESSIONS` | 24 | as needed | Analyses kept in memory (3 per user) |
 
-**Backups.** Accounts live in one SQLite file. Without Docker, copy `var/momo.db` while the server is stopped.
+### Administration
+
+Accounts whose email is listed in `MOMO_ADMIN_EMAILS` see an extra **Administration** item in the menu. For
+safety, the page opens only after the administrator has turned on two-step sign-in, and only in a signed-in
+browser (never with an API key).
+
+![Administration page](images/admin.png)
+
+- **Counters**: accounts (and new in 24 hours), share using two-step sign-in, sign-ins and failed attempts in
+  the last 24 hours, disabled accounts.
+- **Accounts**: name, email, organisation, when they joined and last signed in, active sessions, two-step
+  status and failed attempts. Search by name, email or organisation. Passwords, codes and keys are never shown.
+- **Actions** for another account, each asking for confirmation:
+    - **Sign out**: ends all of their sessions.
+    - **Reset 2FA**: turns off their two-step sign-in, for someone who lost both phone and recovery codes.
+      Confirm who they are first (for example by phone or in person).
+    - **Disable** / **Re-enable**: a disabled account is signed out at once and cannot sign in, use API keys or
+      reset its password.
+    - **Delete**: removes the account permanently.
+- **Recent security events**: the latest 60 across the platform, including failed sign-ins for emails with no
+  account, a sign that someone is guessing.
+
+Every action appears in both the administrator's and the affected person's **Recent security activity**.
+Administrators cannot use these actions on their own account.
+
+**Backups.** Accounts live in one SQLite file. If you do not set `MOMO_SECRET_KEY`, a `secret.key` file is
+created next to it: back that up **separately** from the database, because the two together unlock the
+two-step secrets. Without Docker, copy `var/momo.db` while the server is stopped.
 With Docker: `docker compose cp momo-fraud-detection:/app/var/momo.db ./momo-backup.db`. Keep backups private.
 
 **Updating.** `git pull`, then restart (`start.sh`, `start.bat` or `docker compose up --build -d`). Accounts
@@ -536,7 +573,10 @@ are kept. Before deploying a change, run the tests: `python -m pytest tests -q -
 | "Too many failed sign-in attempts" | Wait 15 minutes. |
 | "That code is not right" at two-step sign-in | Type the code currently shown; check your phone sets its time automatically. |
 | Lost the phone with the authenticator app | Use a recovery code, then turn two-step sign-in off and on again with the new phone. |
-| Lost the phone and the recovery codes | Ask the person who runs the server. |
+| Lost the phone and the recovery codes | Ask an administrator to reset your two-step sign-in (they will confirm who you are first). |
+| "This server requires two-step sign-in" | Turn it on from the screen shown, or from your Account page (section 10). |
+| "This account has been disabled" | Contact the person who runs the platform. |
+| "Administrators only" or administration asks for two-step | Only listed administrators can open it, and they must turn on two-step sign-in first. |
 | "This reset link is invalid, already used or expired" | Ask for a new link from **Forgot password?**. |
 | No reset email arrives | Check spam; on a server without email set up, ask its operator for the link from the server window. |
 | "This request came from another website and was blocked" | Open the platform directly from its own address. |
@@ -566,10 +606,12 @@ are kept. Before deploying a change, run the tests: `python -m pytest tests -q -
 
 | Term | Meaning |
 | --- | --- |
+| Administrator | An account listed in `MOMO_ADMIN_EMAILS`, which can manage other accounts from the Administration page |
 | Agent collusion | A mobile money agent working with accounts to move fraudulent money, for example many senders paying one receiver |
 | Alert threshold | The risk score at or above which a transaction is flagged |
 | API key | A secret code that lets your own systems use the platform as you, sent in the `X-API-Key` header |
 | AUC-PR | How well the model ranks risky above safe transactions (1.0 is perfect) |
+| Encryption at rest | Stored data scrambled with a key kept elsewhere, so a copy of the data alone is unreadable |
 | Data drift | When new data differs from the data a model was trained on, making its scores less reliable |
 | F1 | A single score balancing precision and recall |
 | Hash | A one-way fingerprint of a secret; the secret cannot be recovered from it |

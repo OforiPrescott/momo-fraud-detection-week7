@@ -83,7 +83,9 @@ their own account; their analyses and live monitor are private to them.
   edit profile, change password and delete the account, all from the dashboard (**Account** page).
 * **Forgot password?** emails a single-use reset link valid for 30 minutes (configure SMTP, below; without
   it the link is printed in the server window). **Two-step sign-in** adds a 6-digit code from an
-  authenticator app (Google/Microsoft Authenticator, Authy...) plus 8 one-time recovery codes.
+  authenticator app (Google/Microsoft Authenticator, Authy...) plus 8 one-time recovery codes; its secrets are
+  encrypted at rest, and `MOMO_REQUIRE_2FA=1` makes it compulsory. Accounts listed in `MOMO_ADMIN_EMAILS` get an
+  **Administration** page (accounts, security events, disable/re-enable, reset two-step, sign out, delete).
 * **Passwords are never stored**: only a salted PBKDF2-SHA256 hash (600,000 iterations). Sessions and API
   keys are stored only as SHA-256 hashes. Weak and common passwords are refused; repeated failed sign-ins
   are paused; every sign-in, failure and key change appears in the user's **Recent security activity**.
@@ -100,12 +102,13 @@ their own account; their analyses and live monitor are private to them.
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest tests -q --ignore=tests/smoke_test.py   # 56 security, account-recovery, ML and API tests
+python -m pytest tests -q --ignore=tests/smoke_test.py   # 69 security, account, admin, ML and API tests
 python tests/smoke_test.py                                # end-to-end walkthrough of every feature
 ```
 
 CI (`.github/workflows/ci.yml`) runs them on Linux, Windows and macOS for Python 3.11 to 3.13 on every push,
-builds the dashboard and scans dependencies for known vulnerabilities.
+builds the dashboard, builds and starts the Docker image (health, headers, sign-up, non-root, read-only checks)
+and scans dependencies for known vulnerabilities.
 
 ## Project layout
 
@@ -318,6 +321,9 @@ Environment variables:
 | `MOMO_PUBLIC_URL` | none | Address users open the site at (e.g. `https://momo.example.org`); required for reset emails |
 | `MOMO_SMTP_HOST` / `MOMO_SMTP_PORT` | none / 587 | Email server for password-reset links (587 STARTTLS or 465 TLS) |
 | `MOMO_SMTP_USER` / `MOMO_SMTP_PASSWORD` / `MOMO_SMTP_FROM` | none | Email login and sender address |
+| `MOMO_REQUIRE_2FA` | 0 | 1 = every account must turn on two-step sign-in before using the platform |
+| `MOMO_ADMIN_EMAILS` | none | Comma-separated emails of administrators (they also need two-step sign-in) |
+| `MOMO_SECRET_KEY` | none | Key that encrypts two-step secrets; without it a `secret.key` file is created next to the database |
 
 `docker-compose.yml` already sets the shared-server values.
 

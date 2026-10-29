@@ -88,7 +88,7 @@ export default function TwoStep({ onChange = () => {} }) {
         )}
 
         {step === "scan" && setup && (
-          <form className="twostep" onSubmit={(e) => { e.preventDefault(); run(async () => { const r = await post("/api/auth/2fa/enable", { code }); setCodes(r.recovery_codes); setStep("codes"); await refresh(); await load(); toast("Two-step sign-in is on."); }); }}>
+          <form className="twostep" onSubmit={(e) => { e.preventDefault(); run(async () => { const r = await post("/api/auth/2fa/enable", { code }); setCodes(r.recovery_codes); setStep("codes"); await load(); toast("Two-step sign-in is on."); }); }}>
             <div className="qr">{qr ? <img src={qr} alt="QR code to scan with your authenticator app" width="220" height="220" /> : <div className="muted">QR code unavailable: type the key instead.</div>}</div>
             <div className="stack" style={{ gap: 12 }}>
               <ol className="steps">
@@ -102,7 +102,9 @@ export default function TwoStep({ onChange = () => {} }) {
           </form>
         )}
 
-        {step === "codes" && <RecoveryCodes codes={codes} onDone={reset} />}
+        {/* the account is refreshed only once the codes are saved: on a server that requires two-step
+            sign-in, refreshing earlier would close the set-up screen before the codes were seen */}
+        {step === "codes" && <RecoveryCodes codes={codes} onDone={() => { reset(); refresh(); }} />}
 
         {(step === "disable" || step === "regenerate") && (
           <form className="stack" style={{ gap: 12 }} onSubmit={(e) => {

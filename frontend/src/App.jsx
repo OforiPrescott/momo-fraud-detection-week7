@@ -6,22 +6,27 @@ import { LiveProvider, useLive } from "./live";
 import { useSettings } from "./settings";
 import { useToast } from "./toast";
 import Account from "./pages/Account";
+import Admin from "./pages/Admin";
 import Analyze from "./pages/Analyze";
 import Auth, { Avatar } from "./pages/Auth";
+import TwoStep from "./components/TwoStep";
 import Check from "./pages/Check";
 import Live from "./pages/Live";
 import Model from "./pages/Model";
 import Overview from "./pages/Overview";
 
 const NAV = [["overview", "Overview", "overview"], ["analyze", "Analyse data", "analyze"], ["live", "Live monitor", "live"], ["check", "Check a transaction", "check"], ["model", "Model results", "model"], ["account", "Account", "user"]];
-const PAGES = NAV.map(([k]) => k);
+const ADMIN_NAV = ["admin", "Administration", "lock"];
+const PAGES = [...NAV.map(([k]) => k), "admin"];
 
 export default function App() {
-  const { user } = useAuth();
+  const { user, config } = useAuth();
   if (user === undefined) return <div className="splash"><img src="/gvsu-logo-white.svg" alt="" /><div className="progress" /></div>;
   // a password-reset link opens the reset form even if this browser is already signed in
   if (!user || window.location.hash.startsWith("#reset=")) return <Auth />;
   // the live stream is per user, so it only opens once someone is signed in
+  // a server can require two-step sign-in: until it is on, the account can only set it up (or sign out)
+  if (config.require_2fa && !user.mfa_enabled) return <EnforceTwoStep />;
   return <LiveProvider><Shell /></LiveProvider>;
 }
 
@@ -52,7 +57,7 @@ function Shell() {
             <div className="product">MoMo Fraud and Intrusion Detection<small>Security operations dashboard</small></div>
           </div>
           <nav className="nav" aria-label="Main">
-            {NAV.map(([k, label, icon]) => (
+            {(user.is_admin ? [...NAV, ADMIN_NAV] : NAV).map(([k, label, icon]) => (
               <button key={k} className={`${page === k ? "on" : ""} ${k === "account" ? "nav-account" : ""}`} onClick={() => go(k)} aria-label={label} title={label} aria-current={page === k ? "page" : undefined}>
                 <Icon name={icon} /><span>{label}</span>{k === "live" && live.replay.running && <span className="live-dot" title="Replay running" />}
               </button>
@@ -83,8 +88,24 @@ function Shell() {
         {page === "check" && <Check />}
         {page === "model" && <Model />}
         {page === "account" && <Account />}
+        {page === "admin" && (user.is_admin ? <Admin goAccount={() => go("account")} /> : <div className="err">Administrators only.</div>)}
         <p className="foot-note">Scores are model estimates. Validate on real, independently labelled data before relying on them operationally.</p>
       </main>
+    </div>
+  );
+}
+
+function EnforceTwoStep() {
+  const { user, logout } = useAuth();
+  return (
+    <div className="gate">
+      <div className="gatecard">
+        <img src="/gvsu-logo-white.svg" alt="" className="gatelogo" />
+        <h1>Turn on two-step sign-in to continue</h1>
+        <p>Hello {user.name.split(" ")[0]}. This platform requires two-step sign-in for every account, so a stolen password alone can never open it. It takes about a minute: you need your phone and an authenticator app such as Google Authenticator, Microsoft Authenticator or Authy.</p>
+        <TwoStep />
+        <p className="fine" style={{ border: 0 }}>Not now? <button className="link" onClick={logout}>Sign out</button></p>
+      </div>
     </div>
   );
 }

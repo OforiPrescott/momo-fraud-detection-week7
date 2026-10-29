@@ -37,13 +37,20 @@ from urllib.parse import urlparse
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
-from . import mailer, mfa
+from . import mailer, mfa, secretbox
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.abspath(os.environ.get("MOMO_DB_PATH", os.path.join(HERE, "..", "var", "momo.db")))
 COOKIE = "momo_session"
 SECURE_COOKIES = os.environ.get("MOMO_SECURE_COOKIES", "0") == "1"   # set to 1 behind HTTPS
 ALLOW_REGISTRATION = os.environ.get("MOMO_ALLOW_REGISTRATION", "1") == "1"
+# MOMO_REQUIRE_2FA=1: every account must turn on two-step sign-in before it can use anything else
+REQUIRE_2FA = os.environ.get("MOMO_REQUIRE_2FA", "0") == "1"
+# administrators are named by email (comma-separated); they get the Administration page once they use 2FA
+ADMIN_EMAILS = {e.strip().lower() for e in os.environ.get("MOMO_ADMIN_EMAILS", "").split(",") if e.strip()}
+# what an account without two-step sign-in may still do when REQUIRE_2FA is on: set it up, or leave
+SETUP_PATHS = {"/api/auth/me", "/api/auth/logout", "/api/auth/logout-all", "/api/auth/2fa", "/api/auth/2fa/setup",
+               "/api/auth/2fa/enable", "/api/auth/activity", "/api/auth/config"}
 # extra origins (scheme://host:port) allowed to send signed-in requests, e.g. a separately hosted frontend
 TRUSTED_ORIGINS = {o.strip().rstrip("/") for o in os.environ.get("MOMO_TRUSTED_ORIGINS", "").split(",") if o.strip()}
 SHORT_SESSION, LONG_SESSION = 24 * 3600, 30 * 24 * 3600              # "remember me" keeps 30 days
@@ -130,9 +137,12 @@ def _db():
                     """)
                     # upgrade databases created by earlier versions (adds the two-step sign-in columns)
                     have = {r[1] for r in c.execute("PRAGMA table_info(users)")}
-                    for col, ddl in (("totp_secret", "TEXT"), ("totp_pending", "TEXT"), ("totp_last_step", "INTEGER")):
+                    for col, ddl in (("totp_secret", "TEXT"), ("totp_pending", "TEXT"), ("totp_last_step", "INTEGER"),
+                                     ("disabled_at", "REAL")):
                         if col not in have:
                             c.execute(f"ALTER TABLE users ADD COLUMN {col} {ddl}")
+                    if "detail" not in {r[1] for r in c.execute("PRAGMA table_info(security_events)")}:
+                        c.execute("ALTER TABLE security_events ADD COLUMN detail TEXT")
                 try:
                     os.chmod(DB_PATH, 0o600)  # owner read/write only (no effect on Windows ACLs)
                 except OSError:
@@ -180,7 +190,8 @@ _DUMMY_HASH = hash_password(secrets.token_hex(8))  # equalises timing when the e
 def _public(row) -> dict:
     return {"id": row["id"], "email": row["email"], "name": row["name"], "organization": row["organization"],
             "created_at": row["created_at"], "last_login": row["last_login"],
-            "api_key_hint": row["api_key_hint"], "mfa_enabled": bool(row["totp_secret"])}
+            "api_key_hint": row["api_key_hint"], "mfa_enabled": bool(row["totp_secret"]),
+            "is_admin": row["email"].lower() in ADMIN_EMAILS}
 
 
 # ------------------------------------------------------------------ audit trail
@@ -194,6 +205,10 @@ EVENT_LABELS = {
     "mfa_enabled": "Two-step sign-in turned on", "mfa_disabled": "Two-step sign-in turned off",
     "mfa_failed": "Wrong authenticator code entered", "recovery_code_used": "Recovery code used to sign in",
     "recovery_codes_regenerated": "New recovery codes created",
+    "login_blocked": "Sign-in refused: account disabled", "account_disabled": "Account disabled by an administrator",
+    "account_enabled": "Account re-enabled by an administrator",
+    "mfa_reset_by_admin": "Two-step sign-in reset by an administrator",
+    "signed_out_by_admin": "Signed out everywhere by an administrator", "admin_action": "Administrator action",
 }
 
 
@@ -203,8 +218,8 @@ def _audit(request: Request, event: str, user_id=None, detail: str = ""):
     now = time.time()
     try:
         with _db() as c:
-            c.execute("INSERT INTO security_events (user_id, event, ip, user_agent, at) VALUES (?,?,?,?,?)",
-                      (user_id, event, ip, ua, now))
+            c.execute("INSERT INTO security_events (user_id, event, ip, user_agent, at, detail) VALUES (?,?,?,?,?,?)",
+                      (user_id, event, ip, ua, now, detail[:200] or None))
             c.execute("DELETE FROM security_events WHERE at < ?", (now - AUDIT_RETENTION,))
     except sqlite3.Error as e:  # auditing must never break sign-in
         log.error("audit write failed: %s", e)
@@ -300,12 +315,13 @@ def user_from_request(request: Request):
     with _db() as c:
         if token:
             row = c.execute("""SELECT u.* FROM auth_sessions s JOIN users u ON u.id = s.user_id
-                               WHERE s.token_hash=? AND s.expires_at > ?""", (_sha(token), time.time())).fetchone()
+                               WHERE s.token_hash=? AND s.expires_at > ? AND u.disabled_at IS NULL""",
+                            (_sha(token), time.time())).fetchone()
             if row:
                 return _public(row) | {"via": "session"}
         key = request.headers.get("x-api-key", "").strip()
         if key and len(key) <= 128:
-            row = c.execute("SELECT * FROM users WHERE api_key_hash=?", (_sha(key),)).fetchone()
+            row = c.execute("SELECT * FROM users WHERE api_key_hash=? AND disabled_at IS NULL", (_sha(key),)).fetchone()
             if row:
                 return _public(row) | {"via": "api_key"}
     return None
@@ -325,6 +341,8 @@ def guard(request: Request):
     user = user_from_request(request)
     if not user:
         raise HTTPException(401, "Please sign in to continue.")
+    if REQUIRE_2FA and not user["mfa_enabled"] and path not in SETUP_PATHS:
+        raise HTTPException(403, "This server requires two-step sign-in. Turn it on from your Account page to continue.")
     request.state.user = user
 
 
@@ -378,7 +396,7 @@ def _confirm_password(request: Request, uid: int, password: str, event_on_fail: 
 
 @router.get("/config")
 def auth_config():
-    return {"registration_open": ALLOW_REGISTRATION, "reset_by_email": mailer.configured(),
+    return {"registration_open": ALLOW_REGISTRATION, "reset_by_email": mailer.configured(), "require_2fa": REQUIRE_2FA,
             "password_rules": "At least 8 characters with a letter and a number; not a common password; "
                               "must not contain your name or email."}
 
@@ -423,6 +441,9 @@ def login(req: LoginRequest, request: Request, response: Response):
         _record_fail(*keys)
         _audit(request, "login_failed", row["id"] if row else None)
         raise HTTPException(401, "Email or password is incorrect.")
+    if row["disabled_at"]:
+        _audit(request, "login_blocked", row["id"])
+        raise HTTPException(403, "This account has been disabled. Contact the person who runs this platform.")
     if needs_rehash(row["password_hash"]):  # transparently upgrade old, weaker hashes
         with _db() as c:
             c.execute("UPDATE users SET password_hash=? WHERE id=?", (hash_password(req.password), row["id"]))
@@ -452,7 +473,20 @@ def _use_recovery_code(uid: int, code: str) -> bool:
         return cur.rowcount == 1
 
 
-def _use_totp(uid: int, secret: str, last_step, code: str) -> bool:
+def _secret_of(uid: int, stored):
+    """Decrypts a stored authenticator secret; re-encrypts values saved before encryption existed."""
+    plain = secretbox.decrypt(stored)
+    if plain and not secretbox.is_encrypted(stored):
+        with _db() as c:
+            c.execute("UPDATE users SET totp_secret=? WHERE id=? AND totp_secret=?", (secretbox.encrypt(plain), uid, stored))
+    return plain
+
+
+def _use_totp(uid: int, stored_secret: str, last_step, code: str) -> bool:
+    secret = _secret_of(uid, stored_secret)
+    if not secret:  # key lost or data tampered: only recovery codes can work now
+        log.error("two-step secret for user %s could not be decrypted (wrong MOMO_SECRET_KEY?)", uid)
+        return False
     step = mfa.verify(secret, code, last_step)
     if step is None:
         return False
@@ -469,7 +503,7 @@ def login_2fa(req: MfaLoginRequest, request: Request, response: Response):
         ch = c.execute("SELECT * FROM mfa_challenges WHERE token_hash=? AND expires_at > ?",
                        (_sha(req.mfa_token), time.time())).fetchone()
         row = c.execute("SELECT * FROM users WHERE id=?", (ch["user_id"],)).fetchone() if ch else None
-    if not ch or not row or not row["totp_secret"]:
+    if not ch or not row or not row["totp_secret"] or row["disabled_at"]:
         raise HTTPException(401, "This sign-in has expired. Enter your email and password again.")
     uid = row["id"]
     if ch["attempts"] >= MFA_MAX_ATTEMPTS or _throttled(f"mfa:{uid}"):
@@ -516,7 +550,7 @@ def forgot_password(req: ForgotRequest, request: Request):
     _record_fail(*keys)  # also stops anyone flooding a person's inbox with reset emails
     with _db() as c:
         row = c.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
-    if row:
+    if row and not row["disabled_at"]:
         # links are built from MOMO_PUBLIC_URL, never from the request's Host header (which can be forged);
         # in console mode (no SMTP) the link only goes to the server log, so the request address is safe to use
         base = mailer.PUBLIC_URL or ("" if mailer.configured() else str(request.base_url).rstrip("/"))
@@ -542,7 +576,7 @@ def reset_password(req: ResetRequest, request: Request):
         t = c.execute("SELECT * FROM reset_tokens WHERE token_hash=? AND expires_at > ?",
                       (_sha(req.token), time.time())).fetchone()
         row = c.execute("SELECT * FROM users WHERE id=?", (t["user_id"],)).fetchone() if t else None
-    if not t or not row:
+    if not t or not row or row["disabled_at"]:
         _record_fail(ip_key)
         raise HTTPException(400, "This reset link is invalid, already used or expired. Ask for a new one.")
     _check_password(req.new_password, row["email"], row["name"])  # checked first, so a weak choice can be retried
@@ -591,9 +625,9 @@ def activity(request: Request):
     """The signed-in user's recent security events (last 90 days, newest first)."""
     uid = current_user(request)["id"]
     with _db() as c:
-        rows = c.execute("SELECT event, ip, user_agent, at FROM security_events WHERE user_id=? "
+        rows = c.execute("SELECT event, ip, user_agent, at, detail FROM security_events WHERE user_id=? "
                          "ORDER BY at DESC LIMIT 25", (uid,)).fetchall()
-    return [{"event": r["event"], "label": EVENT_LABELS.get(r["event"], r["event"]), "ip": r["ip"],
+    return [{"event": r["event"], "label": EVENT_LABELS.get(r["event"], r["event"]), "detail": r["detail"], "ip": r["ip"],
              "device": _device(r["user_agent"] or ""), "at": r["at"]} for r in rows]
 
 
@@ -679,7 +713,7 @@ def mfa_setup(req: PasswordConfirm, request: Request):
         raise HTTPException(409, "Two-step sign-in is already on. Turn it off first to set up a new phone.")
     secret = mfa.new_secret()
     with _db() as c:
-        c.execute("UPDATE users SET totp_pending=? WHERE id=?", (secret, user["id"]))
+        c.execute("UPDATE users SET totp_pending=? WHERE id=?", (secretbox.encrypt(secret), user["id"]))
     return {"secret": secret, "uri": mfa.provisioning_uri(secret, user["email"])}
 
 
@@ -688,7 +722,7 @@ def mfa_enable(req: CodeRequest, request: Request):
     """Step 2: prove the app works by entering its current code. Returns 8 recovery codes, shown once."""
     user = _browser_user(request)
     with _db() as c:
-        pending = c.execute("SELECT totp_pending FROM users WHERE id=?", (user["id"],)).fetchone()["totp_pending"]
+        pending = secretbox.decrypt(c.execute("SELECT totp_pending FROM users WHERE id=?", (user["id"],)).fetchone()["totp_pending"])
     if not pending:
         raise HTTPException(400, "Start the set-up again: no new key is waiting to be confirmed.")
     step = mfa.verify(pending, req.code, None)
@@ -698,7 +732,7 @@ def mfa_enable(req: CodeRequest, request: Request):
     codes = mfa.new_recovery_codes()
     with _db() as c:
         c.execute("UPDATE users SET totp_secret=?, totp_pending=NULL, totp_last_step=? WHERE id=?",
-                  (pending, step, user["id"]))
+                  (secretbox.encrypt(pending), step, user["id"]))
         c.execute("DELETE FROM recovery_codes WHERE user_id=?", (user["id"],))
         c.executemany("INSERT INTO recovery_codes (code_hash, user_id) VALUES (?,?)",
                       [(mfa.recovery_hash(k), user["id"]) for k in codes])

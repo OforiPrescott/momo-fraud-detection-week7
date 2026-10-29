@@ -31,3 +31,6 @@ var/
 
 # Test caches
 .pytest_cache/
+
+# Encryption key for two-step secrets (never commit)
+secret.key

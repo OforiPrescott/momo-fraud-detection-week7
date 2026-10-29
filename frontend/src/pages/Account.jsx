@@ -107,7 +107,7 @@ export default function Account() {
               <thead><tr><th>When</th><th>What happened</th><th>Device</th><th>Network address</th></tr></thead>
               <tbody>{activity.map((a, i) => (
                 <tr key={i} className={/failed|throttled/.test(a.event) ? "alert-row" : ""}>
-                  <td className="num">{date(a.at)}</td><td>{a.label}</td><td>{a.device}</td><td className="num">{a.ip}</td>
+                  <td className="num">{date(a.at)}</td><td>{a.label}{a.detail && <span className="faint"> ({a.detail})</span>}</td><td>{a.device}</td><td className="num">{a.ip}</td>
                 </tr>
               ))}</tbody>
             </table></div>
