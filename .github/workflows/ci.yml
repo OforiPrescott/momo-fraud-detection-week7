@@ -22,8 +22,8 @@ jobs:
           - os: ubuntu-latest
             python: "3.13"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python }}
           cache: pip
@@ -44,8 +44,8 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true  # report new advisories without blocking unrelated work
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - run: python -m pip install pip-audit
@@ -55,7 +55,7 @@ jobs:
     name: Docker image builds and serves
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Build and start with docker-compose.yml (hardened settings)
         run: docker compose up --build -d
       - name: Health check answers
@@ -68,8 +68,10 @@ jobs:
           curl -fsI http://localhost:8000/ | grep -qi "content-security-policy"
       - name: Accounts volume is writable (sign-up works)
         run: |
-          curl -fs -X POST http://localhost:8000/api/auth/register -H 'Content-Type: application/json' \
-            -d '{"name":"CI Check","email":"ci-check@example.org","password":"Build-check-2026"}' | grep -q '"email"'
+          reply=$(curl -sS -X POST http://localhost:8000/api/auth/register -H 'Content-Type: application/json' \
+            -d '{"name":"Pipeline Robot","email":"ci-robot@example.org","password":"Steady-ledger-2026"}')
+          echo "$reply"
+          echo "$reply" | grep -q '"email"'
       - name: Runs as an unprivileged user on a read-only file system
         run: |
           test "$(docker compose exec -T momo-fraud-detection id -u)" = "10001"
@@ -84,8 +86,8 @@ jobs:
     name: Dashboard builds
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
       - run: npm ci
