@@ -190,6 +190,8 @@ After you sign in, the dark sidebar on the left is your main menu; on a phone it
 
 At the bottom of the sidebar:
 
+- **Appearance**: **Auto** follows your computer's light or dark setting; **Light** or **Dark** always uses that
+  look. The choice is remembered on this device (on a phone, find it on the Account page).
 - **Currency label** chooses the symbol shown before amounts (GHS, $, ₦, KSh and others). It only changes
   the label; amounts are never converted.
 - **API status**: a green dot and "API connected" mean everything works; a red dot means the dashboard cannot
@@ -240,6 +242,9 @@ file may expand to at most four times the upload limit.
 - a time step or timestamp;
 - a device ID and a SIM-change flag: the strongest signals;
 - a confirmed-fraud column (for example `isFraud`, 1 or 0), so the platform can measure its own accuracy.
+
+Not sure what your file should look like? Click **Download a template** on the upload panel for a small example
+file with every column the model can use, then replace its rows with your own.
 
 No device column? Add an **access-events file** (device and SIM-change log) with the optional second upload.
 

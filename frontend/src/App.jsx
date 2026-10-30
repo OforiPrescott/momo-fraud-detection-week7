@@ -5,6 +5,7 @@ import { Icon } from "./components/ui";
 import { LiveProvider, useLive } from "./live";
 import { useSettings } from "./settings";
 import { useToast } from "./toast";
+import ThemeSwitch from "./components/ThemeSwitch";
 import Account from "./pages/Account";
 import Admin from "./pages/Admin";
 import Analyze from "./pages/Analyze";
@@ -64,6 +65,7 @@ function Shell() {
             ))}
           </nav>
           <div className="foot">
+            <ThemeSwitch />
             <label style={{ display: "grid", gap: 4 }}>Currency label
               <select value={currency} onChange={(e) => setCurrency(e.target.value)} style={{ background: "var(--navy-2)", color: "#fff", border: "1px solid var(--navy-3)" }}>
                 <option value="">None</option><option value="GHS">GHS (Ghana cedi)</option><option value="USD">$ (US dollar)</option><option value="NGN">₦ (Nigerian naira)</option><option value="KES">KSh (Kenyan shilling)</option><option value="GBP">£ (British pound)</option><option value="EUR">€ (Euro)</option><option value="ZAR">R (South African rand)</option><option value="UGX">USh (Ugandan shilling)</option><option value="TZS">TSh (Tanzanian shilling)</option><option value="XOF">CFA franc</option><option value="XAF">CFA franc BEAC</option><option value="GMD">D (Gambian dalasi)</option><option value="SLL">Le (Sierra Leonean leone)</option><option value="LRD">L$ (Liberian dollar)</option><option value="MWK">MK (Malawian kwacha)</option><option value="ZMW">K (Zambian kwacha)</option><option value="BWP">P (Botswana pula)</option><option value="NAD">N$ (Namibian dollar)</option><option value="MAD">د.م. (Moroccan dirham)</option><option value="EGP">E£ (Egyptian pound)</option><option value="KWD">د.ك (Kuwaiti dinar)</option><option value="AED">د.إ (UAE dirham)</option><option value="SAR">﷼ (Saudi riyal)</option><option value="JPY">¥ (Japanese yen)</option><option value="INR">₹ (Indian rupee)</option><option value="CNY">¥ (Chinese yuan)</option><option value="CAD">C$ (Canadian dollar)</option><option value="AUD">A$ (Australian dollar)</option>

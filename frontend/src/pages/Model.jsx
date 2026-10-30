@@ -12,7 +12,7 @@ export default function Model() {
   if (!o) return <Busy text="Loading model results..." />;
   return (
     <>
-      <header className="pagehead"><div><h1>Model results</h1><p>Comparison of multiple models on the same held-out test set of 1.27 million transactions.</p></div></header>
+      <header className="pagehead"><div><h1>Model results</h1><p>Three models compared on the same held-out test set of {int(o.n_test)} transactions they never saw during training.</p></div></header>
       <div className="stack">
         <div className="grid g2">
           <Card title="Precision, recall and balance (F1)" sub="Precision: how many alerts are real. Recall: how many attacks are caught."><ModelBars models={o.models} /></Card>

@@ -196,6 +196,16 @@ def model_flagged(limit: int = 25):
 
 
 # ------------------------------------------------------------------ overview + capabilities
+auth.PUBLIC_PATHS.add("/api/public/highlights")
+
+
+@app.get("/api/public/highlights")
+def public_highlights():
+    """Headline figures for the sign-in page (no account needed): read from the project's result files, so the
+    landing page always matches the model actually shipped."""
+    return overview.highlights()
+
+
 @app.get("/api/overview")
 def get_overview():
     try:

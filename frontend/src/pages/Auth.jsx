@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { get } from "../api";
 import { initials, passwordOk, passwordStrength, useAuth } from "../auth";
 import { Icon } from "../components/ui";
 
@@ -7,6 +8,8 @@ const FEATURES = [
   ["live", "Watch transactions live", "Score each transaction the moment it arrives and see alerts, trends and recommendations update in real time."],
   ["check", "Understand every alert", "Each flagged transaction explains which signals raised its risk, such as a new device or a recent SIM change."],
 ];
+
+const compact = (n) => (n == null ? "n/a" : n >= 1e6 ? `${(n / 1e6).toFixed(2)}M` : n.toLocaleString());
 
 export function PasswordInput({ value, onChange, autoComplete, id, placeholder }) {
   const [show, setShow] = useState(false);
@@ -34,6 +37,8 @@ export function StrengthMeter({ pw }) {
 
 export default function Auth() {
   const { login, loginCode, forgot, resetPassword, register, config } = useAuth();
+  const [stats, setStats] = useState(null); // headline figures, read from the project's result files
+  useEffect(() => { get("/api/public/highlights").then(setStats).catch(() => {}); }, []);
   const hash = window.location.hash;
   // modes: login | register | forgot (ask for a link) | reset (choose a new password) | code (authenticator step)
   const [mode, setMode] = useState(() => (hash.startsWith("#reset=") ? "reset" : hash === "#register" ? "register" : "login"));
@@ -110,9 +115,13 @@ export default function Auth() {
           </ul>
         </div>
         <dl className="stats">
-          <div><dt>6.36M</dt><dd>transactions trained on</dd></div>
-          <div><dt>99.6%</dt><dd>of attacks caught (recall)</dd></div>
-          <div><dt>0.94</dt><dd>AUC-PR on held-out data</dd></div>
+          {stats ? (
+            <>
+              <div><dt>{compact(stats.transactions)}</dt><dd>transactions in the project data</dd></div>
+              <div><dt>{(stats.recall * 100).toFixed(1)}%</dt><dd>of attacks caught on unseen data</dd></div>
+              <div><dt>{stats.auc_pr.toFixed(2)}</dt><dd>AUC-PR on held-out data</dd></div>
+            </>
+          ) : <div><dt>3</dt><dd>Ghana-specific attack patterns</dd></div>}
         </dl>
       </section>
 

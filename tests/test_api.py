@@ -49,3 +49,18 @@ def test_account_lifecycle(signed_in):
     assert signed_in.post("/api/auth/password", json={"current_password": "Ledger-check-42", "new_password": "Another-pass-77"}).status_code == 200
     assert signed_in.post("/api/auth/delete", json={"password": "Another-pass-77"}).status_code == 200
     assert signed_in.get("/api/auth/me").status_code == 401
+
+
+def test_public_highlights_match_the_result_files(client):
+    import json
+    r = client.get("/api/public/highlights")  # no account needed: shown on the sign-in page
+    assert r.status_code == 200
+    h = r.json()
+    tuned = json.load(open("reports/model_comparison.json"))["tuned_xgboost_full_train"]
+    total = json.load(open("backend/data/dashboard_summary.json"))["total_transactions"]
+    assert h["recall"] == tuned["recall"] and h["auc_pr"] == tuned["auc_pr"] and h["transactions"] == total
+
+
+def test_model_insight_reads_correctly_for_these_results(signed_in):
+    tradeoff = next(i for i in signed_in.get("/api/overview").json()["insights"] if i["id"] == "tradeoff")
+    assert "but only 100%" not in tradeoff["finding"]

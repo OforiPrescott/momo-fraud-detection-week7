@@ -52,7 +52,7 @@ def build():
     out = {"summary": summary, "models": models, "importance": [{"feature": k, "label": scoring.LABELS.get(k, k),
            "value": round(v, 4)} for k, v in imp], "best_config": cmp_.get("best_config"),
            "search": cmp_.get("hyperparameter_search_results", []), "insights": [], "recommendations": [],
-           "narrative": None}
+           "narrative": None, "n_test": n_test, "n_train": base.get("n_train")}
     ins, rec = out["insights"], out["recommendations"]
 
     def add(sev, id_, title, finding, ev=None, recs=None):
@@ -89,16 +89,30 @@ def build():
             [(k, f"{pct(v)} attack rate") for k, v in sorted(ar.items(), key=lambda kv: -kv[1])[:4]],
             [r("o_type", "soon", f"Prioritise {ta} monitoring in the next dashboard iteration",
                "Add a per-type view with its own threshold, since one global cut-off hides these differences.")])
-    xb, mlp = models[0], models[2]
+    xb, mlp = models[1], models[2]  # the deployed (tuned) XGBoost against the neural net
     extra = xb["alerts"] - mlp["alerts"]
-    add("high", "tradeoff", "XGBoost and the neural net make opposite trade-offs",
-        f"XGBoost catches {pct(xb['recall'] * 100, 1)} of attacks but only {pct(xb['precision'] * 100, 0)} of its alerts are "
-        f"real. The MLP is {pct(mlp['precision'] * 100, 1)} precise but misses {pct((1 - mlp['recall']) * 100, 0)} of attacks. "
-        f"On the held-out test set that is about {n_(xb['alerts'])} versus {n_(mlp['alerts'])} alerts, so XGBoost creates "
-        f"roughly {n_(extra)} more cases for analysts. Ranking quality (AUC-PR) is nearly identical, so the difference is where "
-        "the cut-off sits, a deployment decision.",
-        [(m["name"], f"P {m['precision']:.3f} / R {m['recall']:.3f} / {m['alerts_per_1000']} alerts per 1,000")
-         for m in models],
+    evidence = [(m["name"], f"P {m['precision']:.3f} / R {m['recall']:.3f} / {m['alerts_per_1000']} alerts per 1,000")
+                for m in models]
+    if abs(xb["precision"] - mlp["precision"]) < 0.02 and abs(xb["recall"] - mlp["recall"]) < 0.02:
+        add("info", "tradeoff", "The models perform almost identically",
+            f"On the held-out test set of {n_(n_test)} transactions, the tuned XGBoost model catches "
+            f"{pct(xb['recall'] * 100, 1)} of attacks and {pct(xb['precision'] * 100, 1)} of its alerts are real; the "
+            f"neural net catches {pct(mlp['recall'] * 100, 1)} with {pct(mlp['precision'] * 100, 1)} real. That is "
+            f"{n_(abs(extra))} {'more' if extra >= 0 else 'fewer'} alerts for XGBoost, a negligible difference, so the "
+            "dashboard uses XGBoost for its speed and its per-transaction explanations. Scores this close to perfect "
+            "mainly show that the labels are easy to reproduce from the inputs (the attack rules use the same device and "
+            "SIM signals the model sees), not that real-world accuracy will be as high.",
+            evidence)
+    else:
+        lower = "only " if xb["precision"] < mlp["precision"] else ""
+        add("high", "tradeoff", "XGBoost and the neural net make opposite trade-offs",
+            f"XGBoost catches {pct(xb['recall'] * 100, 1)} of attacks but {lower}{pct(xb['precision'] * 100, 0)} of its "
+            f"alerts are real. The neural net is {pct(mlp['precision'] * 100, 1)} precise but misses "
+            f"{pct((1 - mlp['recall']) * 100, 0)} of attacks. On the held-out test set of {n_(n_test)} transactions that is "
+            f"about {n_(xb['alerts'])} versus {n_(mlp['alerts'])} alerts, so XGBoost creates roughly {n_(abs(extra))} "
+            f"{'more' if extra >= 0 else 'fewer'} cases for analysts. Ranking quality (AUC-PR) is nearly identical, so the "
+            "difference is where the cut-off sits, a deployment decision.",
+            evidence,
         [         r("o_decide", "now", "Determine which error costs more for your use case",
            "A missed attack means lost funds; a false alarm costs analyst time and customer friction. Put a figure "
            "on each and choose the threshold from the dashboard's trade-off curve based on your operational priorities.",
@@ -129,3 +143,13 @@ def build():
         "Run backend/precompute_dashboard_data.py to generate the dataset summary.",
     }
     return out
+
+
+def highlights():
+    """Headline figures for the public sign-in page, read from the project's own result files."""
+    summary = _read(os.path.join(DATA, "dashboard_summary.json"), None)
+    base = _read(os.path.join(REPORTS, "baseline_metrics.json"), FALLBACK_BASE)
+    cmp_ = _read(os.path.join(REPORTS, "model_comparison.json"), FALLBACK_CMP)
+    tuned = cmp_["tuned_xgboost_full_train"]
+    return {"transactions": summary["total_transactions"] if summary else None, "n_test": base.get("n_test"),
+            "recall": tuned["recall"], "auc_pr": tuned["auc_pr"]}

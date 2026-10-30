@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { get } from "../api";
 import { passwordOk, useAuth } from "../auth";
+import ThemeSwitch from "../components/ThemeSwitch";
 import TwoStep from "../components/TwoStep";
 import { Card } from "../components/ui";
 import { useToast } from "../toast";
@@ -99,6 +100,10 @@ export default function Account() {
         </Card>
 
         <TwoStep onChange={loadActivity} />
+
+        <Card title="Appearance" sub="Auto follows your device's light or dark setting. Saved on this device.">
+          <ThemeSwitch light />
+        </Card>
 
         <Card title="Recent security activity" sub="Sign-ins, password and API key changes on your account over the last 90 days. If you see something you did not do, change your password and sign out of all devices."
           right={<button className="btn sm" onClick={loadActivity}>Refresh</button>}>

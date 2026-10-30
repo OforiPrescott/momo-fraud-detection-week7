@@ -6,6 +6,20 @@ const FORMATS = ["CSV", "TSV", "Excel", "JSON", "JSON Lines", "Parquet", ".gz / 
 const ACCEPT = ".csv,.tsv,.txt,.xlsx,.xlsm,.xls,.json,.jsonl,.ndjson,.parquet,.gz,.zip";
 
 /** Four ways to bring data in. Every route ends in the same analysis. */
+// An example file with every column the model can use, so new users can see the expected shape of their data.
+const TEMPLATE = `step,type,amount,nameOrig,oldbalanceOrg,newbalanceOrig,nameDest,oldbalanceDest,newbalanceDest,device_id,sim_change,isFraud
+1,PAYMENT,4500,C1001,30000,25500,M2001,0,0,dev-a1,0,0
+1,TRANSFER,180000,C1002,180000,0,C3001,5000,185000,dev-b7,1,1
+2,CASH_OUT,180000,C3001,185000,5000,C4001,0,180000,dev-c2,0,1
+3,CASH_IN,20000,C1003,1000,21000,C5001,90000,70000,dev-d4,0,0
+4,PAYMENT,1200,C1001,25500,24300,M2002,0,0,dev-a1,0,0
+`;
+function downloadTemplate() {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([TEMPLATE], { type: "text/csv" }));
+  a.download = "momo-transactions-template.csv"; a.click(); URL.revokeObjectURL(a.href);
+}
+
 export default function SourcePanel({ busy, error, onResult, onBusy, onError, threshold, currency }) {
   const [mode, setMode] = useState("file");
   const [over, setOver] = useState(false);
@@ -40,7 +54,10 @@ export default function SourcePanel({ busy, error, onResult, onBusy, onError, th
                onDrop={(e) => { e.preventDefault(); setOver(false); sendFile(e.dataTransfer.files[0]); }}>
             <Icon name="file" /><div className="big">Drop a transaction file here</div>
             <div className="formats">{FORMATS.map((f) => <span className="chip" key={f}>{f}</span>)}</div>
-            <button className="btn primary" disabled={busy} onClick={() => input.current.click()}>Choose a file</button>
+            <div className="row" style={{ justifyContent: "center" }}>
+              <button className="btn primary" disabled={busy} onClick={() => input.current.click()}>Choose a file</button>
+              <button className="btn" type="button" onClick={downloadTemplate} title="A small example file showing every column the model can use">Download a template</button>
+            </div>
             <input ref={input} type="file" hidden accept={ACCEPT} onChange={(e) => { sendFile(e.target.files[0]); e.target.value = ""; }} />
             <p className="hint" style={{ maxWidth: 560 }}>Needs at least an <b>amount</b> and a transaction <b>type</b>. Sender, receiver, balances, time and device columns make the analysis richer; common column names are recognised automatically.</p>
           </div>
