@@ -332,28 +332,38 @@ as little as 4GB RAM (several OOM crashes were hit and fixed during development,
 at the top of each script for what each fix was and why). On a typical laptop with more RAM these
 steps will run at least as fast, often faster.
 
-## Results (Week 5 vs Week 6, same held-out test set, 1.27M transactions)
+## Results of the shipped model (same held-out test set, 98,304 transactions)
+
+These are the figures in `reports/baseline_metrics.json` and `reports/model_comparison.json`, which describe
+the model shipped in `backend/model.joblib`: 491,519 PaySim transactions, 393,215 for training and 98,304 held
+out for testing, with 5.4% labelled as attacks.
 
 | Model                     | Precision | Recall | F1    | AUC-ROC | AUC-PR |
 | ------------------------- | --------- | ------ | ----- | ------- | ------ |
-| XGBoost baseline (Week 5) | 0.494     | 0.993  | 0.660 | 0.994   | 0.943  |
-| XGBoost tuned (Week 6)    | 0.487     | 0.996  | 0.654 | 0.993   | 0.942  |
-| MLP neural net (Week 6)   | 0.981     | 0.756  | 0.854 | 0.993   | 0.937  |
+| XGBoost baseline (Week 5) | 0.999     | 1.000  | 0.999 | 1.000   | 1.000  |
+| XGBoost tuned (Week 6)    | 0.999     | 1.000  | 0.999 | 1.000   | 1.000  |
+| MLP neural net (Week 6)   | 0.999     | 0.984  | 0.991 | 0.999   | 0.998  |
+
+On the test set the baseline flagged 5,305 transactions: all 5,300 labelled attacks (none missed) and 5 false
+alarms.
 
 **Key findings:**
 
 - Target label is `any_attack_flag` (PaySim's `isFraud` OR any of the three Week 3 attack
   patterns), since this is an intrusion *and* fraud system, not a fraud-only one.
-- Hyperparameter tuning did not meaningfully beat the baseline, a legitimate finding: the
-  simpler config (max_depth=4) tied the more complex ones on AUC-PR.
-- XGBoost (with imbalance weighting) and the MLP make opposite precision/recall trade-offs:
-  XGBoost catches nearly everything (99.6% recall) at the cost of false positives; the MLP is
-  far more precise (98.1%) but misses a quarter of actual attacks. Which one is "better" depends
-  on whether a false negative or a false positive costs more in deployment — a production threshold
-  choice, not an internal communication item.
-- `orig_distinct_devices` dominates feature importance (0.78), ahead of any transaction-amount
-  feature. Device/access-behavior signals are doing most of the work here, not the financial
-  data alone, which is the core argument for why intrusion-layer data matters for this problem.
+- All three models are close to perfect, and hyperparameter tuning did not beat the baseline: the simpler
+  config (max_depth=4, 150 trees, learning rate 0.1) tied the more complex ones.
+- **Read near-perfect scores with care.** The attack labels are produced by rules over the same device and SIM
+  signals the model receives (for example, PIN-sharing is defined from device counts), so the model can
+  reproduce them almost exactly. The scores show the labelling is learnable, not that real-world accuracy will
+  be this high. Validating on real, independently labelled data is the next step, and the dashboard's upload,
+  database and API options exist for that.
+- `orig_distinct_devices` dominates feature importance (0.79), followed by the sender's balance before the
+  transaction (0.10) and SIM change on record (0.04). Device and access signals do most of the work, which is
+  the core argument for why intrusion-layer data matters for this problem.
+- An earlier full-scale run on all 6.36M PaySim transactions scored lower precision (about 0.49) at similar
+  recall; its model and result files are not part of this repository, so the dashboard and documents use the
+  shipped model above.
 
 ## Week 8 — Dashboard (Nov 3-9)
 

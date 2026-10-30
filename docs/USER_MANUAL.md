@@ -56,8 +56,10 @@ signals. The *XGBoost model* gives every transaction a risk score from 0% to 100
 *interpretation* layer turns scores into response tiers, findings with evidence and per-transaction reasons.
 Results are private to your account.
 
-The model was trained on 6.36 million PaySim transactions enriched with simulated device and SIM events. On
-a held-out test set of 1.27 million transactions it caught 99.6% of attacks (recall), with an AUC-PR of 0.94.
+The model was trained on 393,215 PaySim transactions enriched with simulated device and SIM events. On a
+held-out test set of 98,304 transactions it caught all 5,300 labelled attacks with 5 false alarms. These
+near-perfect scores mean the attack labels (rules over the same device and SIM signals) are easy to learn, not
+that real-world accuracy will be this high.
 See [MODEL_CARD.md](../MODEL_CARD.md) for its limits.
 
 ## 2. Getting started
@@ -345,14 +347,16 @@ account scores far higher from a second device right after a SIM change.
 
 | Model | Precision | Recall | F1 | AUC-PR |
 | --- | --- | --- | --- | --- |
-| XGBoost baseline | 0.494 | 0.993 | 0.660 | 0.943 |
-| XGBoost tuned (used by the dashboard) | 0.487 | 0.996 | 0.654 | 0.942 |
-| MLP neural network | 0.981 | 0.756 | 0.854 | 0.937 |
+| XGBoost baseline | 0.999 | 1.000 | 0.999 | 1.000 |
+| XGBoost tuned (used by the dashboard) | 0.999 | 1.000 | 0.999 | 1.000 |
+| MLP neural network | 0.999 | 0.984 | 0.991 | 0.998 |
 
-The page also shows **what drives the model** (devices used by the sender, about 78%), the **workload** each
-model would create, and the **hyperparameter search**. The trade-off: XGBoost catches nearly every attack but
-about half its alerts are false alarms; the neural network's alerts are almost always real but it misses a
-quarter of attacks. The alert threshold lets you move along that trade-off.
+The page also shows **what drives the model** (devices used by the sender, 79%), the **workload** each
+model would create, and the **hyperparameter search**. All three models score close to perfect on the
+held-out test set, so the dashboard uses XGBoost for its speed and per-transaction explanations. Near-perfect
+scores show the labels are easy to learn from the device and SIM signals, not that real-world accuracy will be
+as high, so validate on your own labelled data. The alert threshold still lets you trade catching more attacks
+against raising fewer alerts.
 
 ## 10. Account page
 
@@ -623,7 +627,7 @@ are kept. Before deploying a change, run the tests: `python -m pytest tests -q -
 | Authenticator app | A phone app (Google Authenticator, Microsoft Authenticator, Authy...) that shows a new 6-digit sign-in code every 30 seconds |
 | Ingest | Sending transactions to the platform one at a time as they happen |
 | Recovery code | A one-time code that replaces the authenticator code if you lose your phone |
-| PaySim | A public simulated mobile money dataset (6.36 million transactions) used to train the model |
+| PaySim | A public simulator of mobile money transactions; 491,519 of its transactions trained and tested the model |
 | PIN-sharing abuse | One account used from several devices, suggesting its PIN is known to others |
 | Precision | Of the transactions flagged, the share that were real attacks ("alerts that are real") |
 | PSI | Population Stability Index: a measure of how much a value's distribution has shifted |
